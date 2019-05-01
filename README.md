@@ -23,308 +23,241 @@ go get github.com/2654709623/httpc
 
 [httpc在线文档](https://godoc.org/github.com/2654709623/httpc)
 
-## 例子
+## 快速入门
 
-### 1. 简单请求
+### 1. 简单的请求
 
 ```go
+//新建一个请求和http客户端
 req:=httpc.NewRequest(httpc.NewHttpClient())
-//get请求
+//get请求,返回string类型的body
 resp,body,err:=req.SetUrl("http://127.0.0.1").Send().End()
-post请求
-resp,body,err:=req.SetMethod("post").SetUrl("http://127.0.0.1").Send().End()
-put请求
-resp,body,err:=req.SetMethod("put").SetUrl("http://127.0.0.1").Send().End()
-//最简单的get请求，不带返回值
-req.SetUrl("http://127.0.0.1").Send()
-//带返回值，返回string类型的body
-resp,body,err:=req.SetUrl("http://127.0.0.1").Send().End()
-//设置头信息，返回byte类型的body
-resp,bodyByte,err:=req.SetUrl("http://127.0.0.1").SetHeader("HOST","127.0.0.1").Send().EndByte()
-//设置请求包体
-_, _, _ = req.SetUrl("http://127.0.0.1").SetData("client", "httpc").Send().End()
-//添加cookie
+if err!=nil {
+    fmt.Println(err)
+}else{
+    fmt.Println(resp)
+    fmt.Println(body)
+}
+```
+
+### 2. 设置头信息
+
+```go
+//新建一个http客户端
+client:=httpc.NewHttpClient()
+//新建一个请求
+req:=httpc.NewRequest(client)
+req.SetMethod("post").SetUrl("http://127.0.0.1")
+//设置头信息,返回byte类型的body
+resp,bodyByte,err:=req.SetHeader("HOST","127.0.0.1").Send().EndByte()
+if err!=nil {
+    fmt.Println(err)
+}else{
+    fmt.Println(resp)
+    fmt.Println(bodyByte)
+}
+```
+
+### 3. 设置请求数据
+
+```go
+//新建一个http客户端
+client:=httpc.NewHttpClient()
+//新建一个请求
+req:=httpc.NewRequest(client)
+req.SetMethod("post").SetUrl("http://127.0.0.1")
+//设置头信息
+req.SetHeader("HOST","127.0.0.1")
+//设置请求信息
+resp,body,err:=req.SetData("client", "httpc").Send().End()
+if err!=nil {
+    fmt.Println(err)
+}else{
+    fmt.Println(resp)
+    fmt.Println(body)
+}
+```
+
+### 4. 设置Cookie
+
+```go
+//新建一个http客户端
+client:=httpc.NewHttpClient()
+//新建一个请求
+req:=httpc.NewRequest(client)
+//设置请求地址和头信息
+req.SetUrl("http://127.0.0.1").SetHeader("HOST","127.0.0.1")
+//设置请求数据
+req.SetData("client", "httpc")
 var cookies []*http.Cookie
 cookie:=&http.Cookie{Name:"client",Value:"httpc"}
 cookies= append(cookies, cookie)
-resp,_,_:=req.SetUrl("http://127.0.0.1").SetCookies(&cookies).Send().End()
-```
-
-### 2. Search for text blocks
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setImage(__DIR__.'/img/1.png');
-$tesseract->getComponentImages('RIL_WORD',function ($x,$y,$w,$h,$text){
-    echo "Result:{$text}X:{$x}Y:{$y}Width:{$w}Height:{$h}";
-    echo '<br>';
-});
-```
-
-### 3. Get result iterator
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setImage(__DIR__.'/img/1.png')->recognize(0);
-$tesseract->getIterator('RIL_TEXTLINE',function ($text,$x1,$y1,$x2,$y2){
-    echo "Text:{$text}X1:{$x1}Y1:{$y1}X2:{$x2}Y2:{$y2}";
-    echo '<br>';
-});
-echo $tesseract->getUTF8Text();
-```
-
-### 4. Setting image recognition area
-
-Help to improve recognition speed
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$text=$tesseract->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setImage(__DIR__.'/img/1.png')
-->setRectangle(100,100,100,100)
-->getUTF8Text();
-echo $text;
-```
-
-### 5. Setting Page Segmentation Mode
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setPageSegMode('PSM_AUTO')
-->setImage(__DIR__.'/img/1.png')
-->recognize(0)
-->analyseLayout()
-echo $tesseract->getUTF8Text();
-```
-
-## API
-
-### setVariable($name,$value)
-
-Setting additional parameters
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-//Example1
-$tesseract->setVariable('save_blob_choices','T');
-//Example2
-$tesseract->setVariable('tessedit_char_whitelist','0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ');
-//Example3
-$tesseract->setVariable('tessedit_char_blacklist','xyz');
-```
-
-setVariable Options Reference:http://www.sk-spell.sk.cx/tesseract-ocr-parameters-in-302-version
-
-
-### init($dir,$lang,$mod='OEM_DEFAULT')
-
-Tesseract initialization
-
-Traineddata download:https://github.com/tesseract-ocr/tessdata
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-//Traineddata directory must / end
-$tesseract->setVariable('save_blob_choices','T')->init(__DIR__.'/traineddata/tessdata-fast/','eng');
-//Multiple languages
-$tesseract->setVariable('save_blob_choices','T')->init(__DIR__.'/traineddata/tessdata-fast/','eng+chi_sim');
-//Setting Engine Mode
-$tesseract->setVariable('save_blob_choices','T')->init(__DIR__.'/traineddata/tessdata-raw/','eng','OEM_TESSERACT_LSTM_COMBINED');
-```
-
-Engine Mode Options:
-- OEM_DEFAULT(Default, based on what is available.)
-- OEM_LSTM_ONLY(Neural nets LSTM engine only.)
-- OEM_TESSERACT_LSTM_COMBINED(Legacy + LSTM engines.)
-- OEM_TESSERACT_ONLY(Legacy engine only.)
-
-### setPageSegMode($name)
-
-Setting Paging Mode
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->setVariable('save_blob_choices','T')
-->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setPageSegMode('PSM_AUTO');
-```
-PageSegMode Options Reference:https://rmtheis.github.io/tess-two/javadoc/com/googlecode/tesseract/android/TessBaseAPI.PageSegMode.html
-### setImage($path)
-
-Setting Recognition Pictures
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-//Support png, jpg, jpeg, tif, webp format
-$tesseract->setVariable('save_blob_choices','T')
-->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setPageSegMode('PSM_AUTO')
-->setImage(__DIR__.'/img/1.png');
-```
-
-### setRectangle($left,$top,$width,$height)
-
-Setting image recognition area
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->->setVariable('save_blob_choices','T')
-->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setPageSegMode('PSM_AUTO')
-->setImage(__DIR__.'/img/1.png')
-->setRectangle(100,100,100,100);
-```
-
-### recognize($monitor)
-
-After Recognize, the output is kept internally until the next SetImage
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->setVariable('save_blob_choices','T')
-->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setPageSegMode('PSM_AUTO')
-->setImage(__DIR__.'/img/1.png')
-->setRectangle(100,100,100,100)
-//For the time being, only 0 or null is supported.
-->recognize(0);
-```
-
-### analyseLayout()
-
-Application Paging Layout
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->setVariable('save_blob_choices','T')
-->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setPageSegMode('PSM_AUTO')
-->setImage(__DIR__.'/img/1.png')
-->setRectangle(100,100,100,100)
-->recognize(0)
-->analyseLayout();
-```
-
-### orientation(&$orientation,&$writingDirection,&$textlineOrder,&$deskewAngle)
-
-Get page layout analysis
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->setVariable('save_blob_choices','T')
-->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setPageSegMode('PSM_AUTO')
-->setImage(__DIR__.'/img/1.png')
-->setRectangle(100,100,100,100)
-->recognize(0)
-->analyseLayout()
-->orientation($orientation,$writingDirection,$textlineOrder,$deskewAngle);
-```
-
-### getComponentImages($level,$callable)
-
-Search for text blocks
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setImage(__DIR__.'/img/1.png');
-$tesseract->getComponentImages('RIL_WORD',function ($x,$y,$w,$h,$text){
-    echo "Result:{$text}X:{$x}Y:{$y}Width:{$w}Height:{$h}";
-    echo '<br>';
-});
-```
-
-PageIteratorLevel Options:
-- RIL_BLOCK(Block of text/image/separator line.)
-- RIL_PARA(Paragraph within a block.)
-- RIL_TEXTLINE(Line within a paragraph.)
-- RIL_WORD(Word within a textline.)
-- RIL_SYMBOL(Symbol/character within a word.)
-
-### getIterator($level,$callable)
-
-Get result iterator
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setImage(__DIR__.'/img/1.png')->recognize(0);
-$tesseract->getIterator('RIL_TEXTLINE',function ($text,$x1,$y1,$x2,$y2){
-    echo "Text:{$text}X1:{$x1}Y1:{$y1}X2:{$x2}Y2:{$y2}";
-    echo '<br>';
-});
-```
-See getComponentImages for parameters
-
-### getUTF8Text()
-
-Get UTF8 characters
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$text=$tesseract->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-->setImage(__DIR__.'/img/1.png')
-->getUTF8Text();
-echo $text;
-```
-
-### clear()
-
-Free up recognition results and any stored image data
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-$tesseract->init(__DIR__.'/traineddata/tessdata-fast/','eng')
-//Three images were recognized normally.
-for($i=1;$i<=3;$i++){
-    $tesseract->setImage(__DIR__.'/img/'.$i.'.png')
-    echo $tesseract->getUTF8Text();
-}
-//Only one can be identified.
-for($i=1;$i<=3;$i++){
-   $tesseract->setImage(__DIR__.'/img/'.$i.'.png')
-   echo $tesseract->getUTF8Text();
-   $tesseract->clear();
+//添加cookie并请求
+resp,bodyByte,err:=req.SetCookies(&cookies).Send().End()
+if err!=nil {
+    fmt.Println(err)
+}else{
+    fmt.Println(resp)
+    fmt.Println(bodyByte)
 }
 ```
 
-### version()
+### 5. 上传文件
 
-Get php tesseract version
-
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-echo $tesseract->version();
+```go
+//新建一个http客户端
+client:=httpc.NewHttpClient()
+//新建一个请求
+req:=httpc.NewRequest(client)
+req.SetMethod("post").SetUrl("http://127.0.0.1")
+//设置上传的文件
+req.SetFileData("img1","./img.png",true)
+//设置附加参数
+req.SetFileData("client","httpc",false)
+resp,body,err:=req.SendFile().End()
+if err!=nil {
+    fmt.Println(err)
+}else{
+    fmt.Println(resp)
+    fmt.Println(body)
+}
 ```
 
-### tesseract()
+### 6. 下载文件
 
-Get tesseract version
+```go
+//新建一个http客户端
+client:=httpc.NewHttpClient()
+//新建一个请求
+req:=httpc.NewRequest(client)
+//请求保存文件
+resp,body,err:=req.SetUrl("http://127.0.0.1/1.zip").Send().EndFile("./")
+if err!=nil {
+    fmt.Println(err)
+}else{
+    fmt.Println(resp)
+    fmt.Println(body)
+}
+```
 
-```php
-use tesseract_ocr\Tesseract;
-$tesseract=new Tesseract();
-echo $tesseract->tesseract();
+### 7. 开启调试
+
+```go
+req:=httpc.NewRequest(httpc.NewHttpClient())
+req.SetMethod("post").SetUrl("https://127.0.0.1")
+req.SetHeader("HOST","127.0.0.1")
+req.SetData("client","httpc")
+var cookies []*http.Cookie
+cookie:=&http.Cookie{Name:"client",Value:"httpc"}
+cookies= append(cookies, cookie)
+_, _, _ = req.SetCookies(&cookies).SetDebug(true).Send().End()
+```
+
+> ⚠ 在实际场景中不建议复用Request，建议每个请求一个Request。
+
+## 高级用法
+
+### 1. 设置请求超时
+
+```go
+//新建http客户端
+client:=httpc.NewHttpClient()
+//设置请求超时,默认值为30秒
+client.SetTimeout(5*time.Second)
+//新建一个请求
+req:=httpc.NewRequest(client)
+req.SetMethod("post").SetUrl("http://127.0.0.1")
+//设置头信息,返回byte类型的body
+resp,bodyByte,err:=req.SetHeader("HOST","127.0.0.1").Send().EndByte()
+if err!=nil {
+    fmt.Println(err)
+}else{
+    fmt.Println(resp)
+    fmt.Println(bodyByte)
+}
+```
+
+### 2. 设置COOKIE管理器
+
+```go
+//新建http客户端
+client:=httpc.NewHttpClient()
+//新建一个cookie管理器,后面所有请求的cookie将保存在这
+cookieJar:=httpc.NewCookieJar()
+//设置cookie管理器,
+client.SetCookieJar(cookieJar)
+//新建一个请求
+req:=httpc.NewRequest(client)
+req.SetMethod("post").SetUrl("http://127.0.0.1")
+//设置头信息,返回byte类型的body
+resp,bodyByte,err:=req.SetHeader("HOST","127.0.0.1").Send().EndByte()
+if err!=nil {
+    fmt.Println(err)
+}else{
+    //从cookie管理器中获取当前访问url保存的cookie
+    u, _ := url.Parse("http://127.0.0.1")
+    cookies:=cookieJar.Cookies(u)
+    fmt.Println(cookies)
+    fmt.Println(resp)
+    fmt.Println(bodyByte)
+}
+```
+
+### 3. 设置传输连接参数
+
+```go
+//新建http客户端
+client:=httpc.NewHttpClient()
+//设置连接传输参数
+client.SetTransport(&http.Transport{
+    Proxy:                 http.ProxyFromEnvironment,
+    MaxIdleConns:          100,
+    IdleConnTimeout:       30 * time.Second,
+    TLSHandshakeTimeout:   10 * time.Second,
+    ExpectContinueTimeout: 1 * time.Second,
+    ResponseHeaderTimeout: 10 * time.Second,
+})
+//新建一个请求
+req:=httpc.NewRequest(client)
+req.SetMethod("post").SetUrl("http://127.0.0.1")
+//设置头信息,返回byte类型的body
+resp,bodyByte,err:=req.SetHeader("HOST","127.0.0.1").Send().EndByte()
+if err!=nil {
+    fmt.Println(err)
+}else{
+    //从cookie管理器中获取当前访问url保存的cookie
+    u, _ := url.Parse("http://127.0.0.1")
+    cookies:=cookieJar.Cookies(u)
+    fmt.Println(cookies)
+    fmt.Println(resp)
+    fmt.Println(bodyByte)
+}
+```
+
+### 4. 设置重定向处理
+
+```go
+//新建http客户端
+client:=httpc.NewHttpClient()
+//设置http客户端重定向处理函数
+client.SetRedirect(func(req *http.Request, via []*http.Request) error {
+    return http.ErrUseLastResponse
+})
+//新建一个请求
+req:=httpc.NewRequest(client)
+req.SetMethod("post").SetUrl("http://127.0.0.1")
+//设置头信息,返回byte类型的body
+resp,bodyByte,err:=req.SetHeader("HOST","127.0.0.1").Send().EndByte()
+if err!=nil {
+    fmt.Println(err)
+}else{
+    //从cookie管理器中获取当前访问url保存的cookie
+    u, _ := url.Parse("http://127.0.0.1")
+    cookies:=cookieJar.Cookies(u)
+    fmt.Println(cookies)
+    fmt.Println(resp)
+    fmt.Println(bodyByte)
+}
 ```
 
 ## License
