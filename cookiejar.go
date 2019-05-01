@@ -1,9 +1,3 @@
-/**
- * 此文件是go自带的cookiejar包的bug修复修改版
- * 1.修复了地方域名(.com.cn,org.cn)设置作用域问题
- * 2.修复了读取cookie时缺少Domain的问题
- * 3.修复了设置cookie时Path的问题
- */
 package httpc
 
 import (
