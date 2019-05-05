@@ -58,7 +58,7 @@ if err!=nil {
 }
 ```
 
-### 3. 设置请求数据
+### 3. 设置请求信息
 
 ```go
 //新建一个http客户端
@@ -153,7 +153,7 @@ cookies= append(cookies, cookie)
 _, _, _ = req.SetCookies(&cookies).SetDebug(true).Send().End()
 ```
 
-> ⚠ 在实际场景中不建议复用Request，建议每个请求一个Request。
+> ⚠ 在实际场景中不建议复用Request，建议每个请求对应一个Request。
 
 ## 高级用法
 
@@ -225,10 +225,6 @@ resp,bodyByte,err:=req.SetHeader("HOST","127.0.0.1").Send().EndByte()
 if err!=nil {
     fmt.Println(err)
 }else{
-    //从cookie管理器中获取当前访问url保存的cookie
-    u, _ := url.Parse("http://127.0.0.1")
-    cookies:=cookieJar.Cookies(u)
-    fmt.Println(cookies)
     fmt.Println(resp)
     fmt.Println(bodyByte)
 }
@@ -251,10 +247,6 @@ resp,bodyByte,err:=req.SetHeader("HOST","127.0.0.1").Send().EndByte()
 if err!=nil {
     fmt.Println(err)
 }else{
-    //从cookie管理器中获取当前访问url保存的cookie
-    u, _ := url.Parse("http://127.0.0.1")
-    cookies:=cookieJar.Cookies(u)
-    fmt.Println(cookies)
     fmt.Println(resp)
     fmt.Println(bodyByte)
 }
