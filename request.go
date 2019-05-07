@@ -14,11 +14,6 @@ import (
 	"strings"
 )
 
-type fileData struct {
-	bodyBuf *bytes.Buffer
-	bodyWrite *multipart.Writer
-}
-
 type Request struct {
 	httpc *HttpClient
 	request *http.Request
@@ -28,21 +23,19 @@ type Request struct {
 	header map[string]string
 	cookies *[]*http.Cookie
 	data url.Values
-	fileData fileData
+	fileData map[bool]map[string]string
 	debug bool
 	err error
 }
 
 func NewRequest(client *HttpClient) *Request {
-	bodyBuf := &bytes.Buffer{}
-	bodyWriter := multipart.NewWriter(bodyBuf)
 	return &Request{
 		httpc:client,
 		method:"GET",
 		header:make(map[string]string),
 		cookies:new([]*http.Cookie),
 		data:url.Values{},
-		fileData:fileData{bodyBuf:bodyBuf,bodyWrite:bodyWriter},
+		fileData:make(map[bool]map[string]string),
 	}
 }
 
@@ -77,36 +70,54 @@ func (this *Request) SetData(name,value string) *Request {
 }
 
 func (this *Request) SetFileData(name,value string,isFile bool) *Request  {
-	if isFile==true{
-		fd,err:=os.Open(value)
+	this.fileData[isFile]= map[string]string{name:value}
+	return this
+}
 
+func (this *Request) Send(a ...interface{}) *Request {
+	var err error
+
+	if len(a)==0 || a[0]==false {
+		this.request,err=http.NewRequest(this.method,this.url,strings.NewReader(this.data.Encode()))
+		defer this.log(false)
 		if err!=nil {
 			this.err=err
 			return this
 		}
-		defer fd.Close()
 
-		fileWriter,_:=this.fileData.bodyWrite.CreateFormFile(name,filepath.Base(value))
-		_,_=io.Copy(fileWriter,fd)
+		if this.method=="POST" {
+			this.request.Header.Set("Content-Type","application/x-www-form-urlencoded")
+		}
 	}else{
-		_ = this.fileData.bodyWrite.WriteField(name, value)
-	}
+		bodyBuf := &bytes.Buffer{}
+		bodyWriter := multipart.NewWriter(bodyBuf)
+		for h,m:=range this.fileData {
+			for k,v:= range m {
+				if h {
+					fd,err:=os.Open(v)
+					if err!=nil {
+						this.err=err
+						return this
+					}
+					fileWriter,_:=bodyWriter.CreateFormFile(k,filepath.Base(v))
+					_,_=io.Copy(fileWriter,fd)
+					fd.Close()
+				}else{
+					_ = bodyWriter.WriteField(k,v)
+				}
+			}
+		}
 
-	return this
-}
+		contentType:=bodyWriter.FormDataContentType()
+		_ = bodyWriter.Close()
+		this.request,err=http.NewRequest(this.method,this.url,ioutil.NopCloser(bodyBuf))
+		defer this.log(true)
+		if err!=nil {
+			this.err=err
+			return this
+		}
 
-func (this *Request) Send() *Request {
-	_ = this.fileData.bodyWrite.Close()
-	var err error
-	this.request,err=http.NewRequest(this.method,this.url,strings.NewReader(this.data.Encode()))
-	defer this.log(false)
-	if err!=nil {
-		this.err=err
-		return this
-	}
-
-	if this.method=="POST" {
-		this.request.Header.Set("Content-Type","application/x-www-form-urlencoded")
+		this.request.Header.Set("Content-Type",contentType)
 	}
 	for k,v:=range this.header {
 		this.request.Header.Set(k,v)
@@ -115,61 +126,26 @@ func (this *Request) Send() *Request {
 	for _,v:= range *this.cookies {
 		this.request.AddCookie(v)
 	}
-	
-	response,err:=this.httpc.client.Do(this.request)
+
+	this.response,err=this.httpc.client.Do(this.request)
 	if err!=nil {
 		this.err=err
 		return this
 	}
 
-	this.response=response
-	return this
-}
-
-func (this *Request) SendFile() *Request {
-	contentType:=this.fileData.bodyWrite.FormDataContentType()
-	_ = this.fileData.bodyWrite.Close()
-	var err error
-
-	this.request,err=http.NewRequest(this.method,this.url,ioutil.NopCloser(this.fileData.bodyBuf))
-	defer this.log(true)
-	if err!=nil {
-		this.err=err
-		return this
-	}
-
-	this.request.Header.Set("Content-Type",contentType)
-	for k,v:=range this.header {
-		this.request.Header.Set(k,v)
-	}
-
-	for _,v:= range *this.cookies {
-		this.request.AddCookie(v)
-	}
-
-	response,err:=this.httpc.client.Do(this.request)
-	if err!=nil {
-		this.err=err
-		return this
-	}
-
-	this.response=response
 	return this
 }
 
 func (this *Request) log(isFile bool) {
 	if this.debug==true {
-		var data =make(map[string][]string)
-		if isFile {
-
-		}else{
-			for k,v:= range this.data {
-				data[k]=v
-			}
-		}
 		fmt.Printf("[httpc Debug]\n")
 		fmt.Printf("-------------------------------------------------------------------\n")
-		fmt.Printf("Request: %s %s\nHeader: %v\nCookies: %v\nBody: %v\n",this.method,this.url,this.request.Header,this.request.Cookies(),data)
+		fmt.Printf("Request: %s %s\nHeader: %v\nCookies: %v\n",this.method,this.url,this.request.Header,this.request.Cookies())
+		if isFile {
+			fmt.Printf("Body: %v\n",this.fileData)
+		}else{
+			fmt.Printf("Body: %v\n",this.data)
+		}
 		fmt.Printf("-------------------------------------------------------------------\n")
 	}
 }
