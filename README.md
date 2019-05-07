@@ -131,7 +131,7 @@ client:=httpc.NewHttpClient()
 //新建一个请求
 req:=httpc.NewRequest(client)
 //请求保存文件
-resp,body,err:=req.SetUrl("http://127.0.0.1/1.zip").Send().EndFile("./")
+resp,body,err:=req.SetUrl("http://127.0.0.1/1.zip").Send().EndFile("./test.zip")
 if err!=nil {
     fmt.Println(err)
 }else{
