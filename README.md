@@ -114,7 +114,7 @@ req.SetMethod("post").SetUrl("http://127.0.0.1")
 req.SetFileData("img1","./img.png",true)
 //设置附加参数
 req.SetFileData("client","httpc",false)
-resp,body,err:=req.SendFile().End()
+resp,body,err:=req.Send(true).End()
 if err!=nil {
     fmt.Println(err)
 }else{
