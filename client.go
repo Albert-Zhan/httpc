@@ -1,19 +1,34 @@
 package httpc
 
 import (
+	"crypto/tls"
 	"net/http"
+	"net/url"
 	"time"
 )
 
 type HttpClient struct {
 	client *http.Client
+	transport *http.Transport
 }
 
 func NewHttpClient() *HttpClient {
+	tr:=&http.Transport{}
+
 	client:=&http.Client{
+		Transport:tr,
 		Timeout: 30*time.Second,
 	}
-	return &HttpClient{client:client}
+	return &HttpClient{client:client,transport:tr}
+}
+
+func (this *HttpClient) SetProxy(proxyUrl string) {
+	proxy, _ := url.Parse(proxyUrl)
+	this.transport.Proxy=http.ProxyURL(proxy)
+}
+
+func (this *HttpClient) SetSkipVerify(isSkipVerify bool) {
+	this.transport.TLSClientConfig=&tls.Config{InsecureSkipVerify: isSkipVerify}
 }
 
 func (this *HttpClient) SetTransport(t *http.Transport) *HttpClient {

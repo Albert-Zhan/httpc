@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"compress/gzip"
 	"strings"
 )
 
@@ -23,6 +24,7 @@ type Request struct {
 	header map[string]string
 	cookies *[]*http.Cookie
 	data url.Values
+	jsonData string
 	fileData map[bool]map[string]string
 	debug bool
 	err error
@@ -69,6 +71,11 @@ func (this *Request) SetData(name,value string) *Request {
 	return this
 }
 
+func (this *Request) SetJsonData(s string) *Request {
+	this.jsonData=s
+	return this
+}
+
 func (this *Request) SetFileData(name,value string,isFile bool) *Request  {
 	this.fileData[isFile]= map[string]string{name:value}
 	return this
@@ -77,16 +84,23 @@ func (this *Request) SetFileData(name,value string,isFile bool) *Request  {
 func (this *Request) Send(a ...interface{}) *Request {
 	var err error
 
-	if len(a)==0 || a[0]==false {
+	if len(a)==0 || a[0]=="url" {
 		this.request,err=http.NewRequest(this.method,this.url,strings.NewReader(this.data.Encode()))
-		defer this.log(false)
+		defer this.log("url")
 		if err!=nil {
 			this.err=err
 			return this
 		}
 
 		if this.method=="POST" {
-			this.request.Header.Set("Content-Type","application/x-www-form-urlencoded")
+			this.request.Header.Set("Content-Type","application/x-www-form-urlencoded; charset=UTF-8")
+		}
+	}else if a[0]=="json" {
+		this.request,err=http.NewRequest(this.method,this.url,strings.NewReader(this.jsonData))
+		defer this.log("json")
+		if err!=nil {
+			this.err=err
+			return this
 		}
 	}else{
 		bodyBuf := &bytes.Buffer{}
@@ -111,7 +125,7 @@ func (this *Request) Send(a ...interface{}) *Request {
 		contentType:=bodyWriter.FormDataContentType()
 		_ = bodyWriter.Close()
 		this.request,err=http.NewRequest(this.method,this.url,ioutil.NopCloser(bodyBuf))
-		defer this.log(true)
+		defer this.log("file")
 		if err!=nil {
 			this.err=err
 			return this
@@ -136,15 +150,17 @@ func (this *Request) Send(a ...interface{}) *Request {
 	return this
 }
 
-func (this *Request) log(isFile bool) {
+func (this *Request) log(t string) {
 	if this.debug==true {
 		fmt.Printf("[httpc Debug]\n")
 		fmt.Printf("-------------------------------------------------------------------\n")
 		fmt.Printf("Request: %s %s\nHeader: %v\nCookies: %v\n",this.method,this.url,this.request.Header,this.request.Cookies())
-		if isFile {
-			fmt.Printf("Body: %v\n",this.fileData)
-		}else{
+		if t=="url" {
 			fmt.Printf("Body: %v\n",this.data)
+		}else if t=="json" {
+			fmt.Printf("Body: %v\n",this.jsonData)
+		}else{
+			fmt.Printf("Body: %v\n",this.fileData)
 		}
 		fmt.Printf("-------------------------------------------------------------------\n")
 	}
@@ -155,7 +171,15 @@ func (this *Request) End() (*http.Response,string,error) {
 		return nil,"",errors.New(this.err.Error())
 	}
 
-	bodyByte,_:=ioutil.ReadAll(this.response.Body)
+	var bodyByte []byte
+
+	if this.response.Header.Get("Content-Encoding")=="gzip"{
+		reader,_:=gzip.NewReader(this.response.Body)
+		defer reader.Close()
+		bodyByte,_=ioutil.ReadAll(reader)
+	}else{
+		bodyByte,_=ioutil.ReadAll(this.response.Body)
+	}
 
 	return this.response,string(bodyByte),nil
 
@@ -166,19 +190,38 @@ func (this *Request) EndByte() (*http.Response,[]byte,error) {
 		return nil,[]byte(""),errors.New(this.err.Error())
 	}
 
-	bodyByte,_:=ioutil.ReadAll(this.response.Body)
+	var bodyByte []byte
+
+	if this.response.Header.Get("Content-Encoding")=="gzip"{
+		reader,_:=gzip.NewReader(this.response.Body)
+		defer reader.Close()
+		bodyByte,_=ioutil.ReadAll(reader)
+	}else{
+		bodyByte,_=ioutil.ReadAll(this.response.Body)
+	}
 
 	return this.response,bodyByte,nil
 
 }
 
-func (this *Request) EndFile(saveFile string) (*http.Response,error)  {
+func (this *Request) EndFile(savePath,saveFileName string) (*http.Response,error)  {
 	if this.err!=nil {
 		return nil,errors.New(this.err.Error())
 	}
 
+	if this.response.StatusCode!=http.StatusOK {
+		return nil,errors.New("Not written")
+	}
+
+	if saveFileName=="" {
+		path:=strings.Split(this.request.URL.String(),"/")
+		if len(path)>1 {
+			saveFileName=path[len(path)-1]
+		}
+	}
+
 	bodyByte,_:=ioutil.ReadAll(this.response.Body)
-	err:= ioutil.WriteFile(saveFile, bodyByte, 0777)
+	err:= ioutil.WriteFile(savePath+saveFileName, bodyByte, 0777)
 	if err!=nil {
 		return nil,errors.New(err.Error())
 	}
