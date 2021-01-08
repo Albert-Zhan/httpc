@@ -180,7 +180,7 @@ func (this *Request) End() (*http.Response,string,error) {
 	}else{
 		bodyByte,_=ioutil.ReadAll(this.response.Body)
 	}
-
+	_=this.response.Body.Close()
 	return this.response,string(bodyByte),nil
 
 }
@@ -199,7 +199,7 @@ func (this *Request) EndByte() (*http.Response,[]byte,error) {
 	}else{
 		bodyByte,_=ioutil.ReadAll(this.response.Body)
 	}
-
+	_=this.response.Body.Close()
 	return this.response,bodyByte,nil
 
 }
@@ -221,6 +221,7 @@ func (this *Request) EndFile(savePath,saveFileName string) (*http.Response,error
 	}
 
 	bodyByte,_:=ioutil.ReadAll(this.response.Body)
+	_=this.response.Body.Close()
 	err:= ioutil.WriteFile(savePath+saveFileName, bodyByte, 0777)
 	if err!=nil {
 		return nil,errors.New(err.Error())
