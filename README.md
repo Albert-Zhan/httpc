@@ -3,9 +3,9 @@ httpc
 [![GoDoc](https://godoc.org/github.com/2654709623/goreq?status.svg)](https://godoc.org/github.com/2654709623/httpc)
 [![License](https://img.shields.io/badge/license-apache2-blue.svg)](LICENSE)
 
-> ⚠ 感谢ztino的使用，让该项目让更多人知道，由于设计初期没有考虑很长远的架构，现在想扩展一些功能比较困难，所以后面打算重构该项目，尽量保证使用上不做太多的变更。
+> ⚠ 感谢ztino的使用，让该项目让更多人知道，由于设计初期没有考虑很长远的架构，现在想扩展一些功能比较困难，和历史遗留问题难以优雅解决，所以后面打算重构该项目，尽量保证使用上不做太多的变更。
 
-> ⚠ 重构后会增强httpc客户端很多功能，目前包括多协程下载文件，断点续传，断点下载，和chromedp的引入
+> ⚠ 重构后会增强httpc客户端很多功能，目前包括多协程下载文件，断点续传，断点下载，和chromedp的引入，还有该项目立的flag的完善
 
 **Go的一个功能强大、易扩展、易使用的http客户端请求库。适合用于接口请求，模拟浏览器请求，爬虫请求。**
 
