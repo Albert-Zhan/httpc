@@ -1,6 +1,6 @@
 httpc
 =======
-[![GoDoc](https://godoc.org/github.com/2654709623/goreq?status.svg)](https://godoc.org/github.com/2654709623/httpc)
+[![GoDoc](https://godoc.org/github.com/Albert-Zhan/goreq?status.svg)](https://godoc.org/github.com/Albert-Zhan/httpc)
 [![License](https://img.shields.io/badge/license-apache2-blue.svg)](LICENSE)
 
 > ⚠ 感谢ztino的使用，让该项目让更多人知道，由于设计初期没有考虑很长远的架构，现在想扩展一些功能比较困难，和历史遗留问题难以优雅解决，所以后面打算重构该项目，尽量保证使用上不做太多的变更。
@@ -20,12 +20,12 @@ httpc
 ## 安装
 
 ```shell
-go get github.com/2654709623/httpc
+go get github.com/Albert-Zhan/httpc
 ```
 
 ## API文档
 
-[httpc在线文档](https://godoc.org/github.com/2654709623/httpc)
+[httpc在线文档](https://godoc.org/github.com/Albert-Zhan/httpc)
 
 ## 快速入门
 

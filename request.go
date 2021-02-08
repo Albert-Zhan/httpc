@@ -1,17 +1,13 @@
 package httpc
 
 import (
-	"bytes"
+	"compress/gzip"
 	"errors"
 	"fmt"
-	"io"
+	"github.com/Albert-Zhan/httpc/body"
 	"io/ioutil"
-	"mime/multipart"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
-	"compress/gzip"
 	"strings"
 )
 
@@ -21,11 +17,10 @@ type Request struct {
 	response *http.Response
 	method string
 	url string
+	param *url.Values
 	header map[string]string
 	cookies *[]*http.Cookie
-	data url.Values
-	jsonData string
-	fileData map[bool]map[string]string
+	data body.Body
 	debug bool
 	err error
 }
@@ -34,10 +29,10 @@ func NewRequest(client *HttpClient) *Request {
 	return &Request{
 		httpc:client,
 		method:"GET",
+		param:&url.Values{},
 		header:make(map[string]string),
 		cookies:new([]*http.Cookie),
-		data:url.Values{},
-		fileData:make(map[bool]map[string]string),
+		debug: false,
 	}
 }
 
@@ -48,6 +43,11 @@ func (this *Request) SetMethod(name string) *Request {
 
 func (this *Request) SetUrl(url string) *Request {
 	this.url=url
+	return this
+}
+
+func (this *Request) SetParam(name,value string) *Request {
+	this.param.Add(name,value)
 	return this
 }
 
@@ -66,73 +66,30 @@ func (this *Request) SetDebug(d bool) *Request {
 	return this
 }
 
-func (this *Request) SetData(name,value string) *Request {
-	this.data.Set(name,value)
+func (this *Request) SetBody(body body.Body) *Request {
+	this.data=body
 	return this
 }
 
-func (this *Request) SetJsonData(s string) *Request {
-	this.jsonData=s
-	return this
-}
+func (this *Request) Send() *Request {
+	param:=this.param.Encode()
+	if param!="" {
+		this.url+="?"+param
+	}
 
-func (this *Request) SetFileData(name,value string,isFile bool) *Request  {
-	this.fileData[isFile]= map[string]string{name:value}
-	return this
-}
-
-func (this *Request) Send(a ...interface{}) *Request {
 	var err error
+	this.request,err=http.NewRequest(this.method,this.url,this.data.Encode())
+	defer this.log()
+	if err!=nil {
+		this.err=err
+		return this
+	}
 
-	if len(a)==0 || a[0]=="url" {
-		this.request,err=http.NewRequest(this.method,this.url,strings.NewReader(this.data.Encode()))
-		defer this.log("url")
-		if err!=nil {
-			this.err=err
-			return this
-		}
-
-		if this.method=="POST" {
-			this.request.Header.Set("Content-Type","application/x-www-form-urlencoded; charset=UTF-8")
-		}
-	}else if a[0]=="json" {
-		this.request,err=http.NewRequest(this.method,this.url,strings.NewReader(this.jsonData))
-		defer this.log("json")
-		if err!=nil {
-			this.err=err
-			return this
-		}
-	}else{
-		bodyBuf := &bytes.Buffer{}
-		bodyWriter := multipart.NewWriter(bodyBuf)
-		for h,m:=range this.fileData {
-			for k,v:= range m {
-				if h {
-					fd,err:=os.Open(v)
-					if err!=nil {
-						this.err=err
-						return this
-					}
-					fileWriter,_:=bodyWriter.CreateFormFile(k,filepath.Base(v))
-					_,_=io.Copy(fileWriter,fd)
-					fd.Close()
-				}else{
-					_ = bodyWriter.WriteField(k,v)
-				}
-			}
-		}
-
-		contentType:=bodyWriter.FormDataContentType()
-		_ = bodyWriter.Close()
-		this.request,err=http.NewRequest(this.method,this.url,ioutil.NopCloser(bodyBuf))
-		defer this.log("file")
-		if err!=nil {
-			this.err=err
-			return this
-		}
-
+	contentType:=this.data.GetContentType()
+	if contentType!="" {
 		this.request.Header.Set("Content-Type",contentType)
 	}
+
 	for k,v:=range this.header {
 		this.request.Header.Set(k,v)
 	}
@@ -150,18 +107,12 @@ func (this *Request) Send(a ...interface{}) *Request {
 	return this
 }
 
-func (this *Request) log(t string) {
+func (this *Request) log() {
 	if this.debug==true {
 		fmt.Printf("[httpc Debug]\n")
 		fmt.Printf("-------------------------------------------------------------------\n")
 		fmt.Printf("Request: %s %s\nHeader: %v\nCookies: %v\n",this.method,this.url,this.request.Header,this.request.Cookies())
-		if t=="url" {
-			fmt.Printf("Body: %v\n",this.data)
-		}else if t=="json" {
-			fmt.Printf("Body: %v\n",this.jsonData)
-		}else{
-			fmt.Printf("Body: %v\n",this.fileData)
-		}
+		fmt.Printf("Body: %s\n",this.data.GetData())
 		fmt.Printf("-------------------------------------------------------------------\n")
 	}
 }
