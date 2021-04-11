@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/Albert-Zhan/httpc/body"
+	"io"
 	"io/ioutil"
 	"net/http"
 	"net/url"
@@ -33,7 +34,13 @@ func NewRequest(client *HttpClient) *Request {
 		header:make(map[string]string),
 		cookies:new([]*http.Cookie),
 		debug: false,
+		err: nil,
 	}
+}
+
+func (this *Request) SetClient(client *HttpClient) *Request {
+	this.httpc=client
+	return this
 }
 
 func (this *Request) SetMethod(name string) *Request {
@@ -77,42 +84,55 @@ func (this *Request) Send() *Request {
 		this.url+="?"+param
 	}
 
-	var err error
-	this.request,err=http.NewRequest(this.method,this.url,this.data.Encode())
+	var data io.Reader
+	contentType:=""
+
+	if this.data!=nil {
+		data=this.data.Encode()
+		contentType=this.data.GetContentType()
+	}
+
+	this.request,this.err=http.NewRequest(this.method,this.url,data)
 	defer this.log()
-	if err!=nil {
-		this.err=err
+	if this.err!=nil {
 		return this
 	}
 
-	contentType:=this.data.GetContentType()
 	if contentType!="" {
 		this.request.Header.Set("Content-Type",contentType)
 	}
-
 	for k,v:=range this.header {
 		this.request.Header.Set(k,v)
 	}
-
 	for _,v:= range *this.cookies {
 		this.request.AddCookie(v)
 	}
 
-	this.response,err=this.httpc.client.Do(this.request)
-	if err!=nil {
-		this.err=err
+	this.response,this.err=this.httpc.client.Do(this.request)
+	if this.err!=nil {
 		return this
 	}
-
 	return this
+}
+
+func (this *Request) GetResponse() *http.Response {
+	return this.response
+}
+
+func (this *Request) GetError() error {
+	return this.err
 }
 
 func (this *Request) log() {
 	if this.debug==true {
+		data:=""
+		if this.data!=nil {
+			data=this.data.GetData()
+		}
 		fmt.Printf("[httpc Debug]\n")
 		fmt.Printf("-------------------------------------------------------------------\n")
 		fmt.Printf("Request: %s %s\nHeader: %v\nCookies: %v\n",this.method,this.url,this.request.Header,this.request.Cookies())
-		fmt.Printf("Body: %s\n",this.data.GetData())
+		fmt.Printf("Body: %s\n",data)
 		fmt.Printf("-------------------------------------------------------------------\n")
 	}
 }
@@ -126,14 +146,14 @@ func (this *Request) End() (*http.Response,string,error) {
 
 	if this.response.Header.Get("Content-Encoding")=="gzip"{
 		reader,_:=gzip.NewReader(this.response.Body)
-		defer reader.Close()
 		bodyByte,_=ioutil.ReadAll(reader)
+		_=reader.Close()
 	}else{
 		bodyByte,_=ioutil.ReadAll(this.response.Body)
 	}
+
 	_=this.response.Body.Close()
 	return this.response,string(bodyByte),nil
-
 }
 
 func (this *Request) EndByte() (*http.Response,[]byte,error) {
@@ -145,14 +165,14 @@ func (this *Request) EndByte() (*http.Response,[]byte,error) {
 
 	if this.response.Header.Get("Content-Encoding")=="gzip"{
 		reader,_:=gzip.NewReader(this.response.Body)
-		defer reader.Close()
 		bodyByte,_=ioutil.ReadAll(reader)
+		_=reader.Close()
 	}else{
 		bodyByte,_=ioutil.ReadAll(this.response.Body)
 	}
+
 	_=this.response.Body.Close()
 	return this.response,bodyByte,nil
-
 }
 
 func (this *Request) EndFile(savePath,saveFileName string) (*http.Response,error)  {
@@ -177,6 +197,6 @@ func (this *Request) EndFile(savePath,saveFileName string) (*http.Response,error
 	if err!=nil {
 		return nil,errors.New(err.Error())
 	}
-	
+
 	return this.response,nil
 }

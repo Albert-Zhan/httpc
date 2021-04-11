@@ -25,10 +25,9 @@ func NewRawData() *Raw {
 	}
 }
 
-func (this *Raw) SetData(data,format string) *Raw {
+func (this *Raw) SetData(data,format string) {
 	this.data=data
 	this.format=format
-	return this
 }
 
 func (this *Raw) GetData() string {

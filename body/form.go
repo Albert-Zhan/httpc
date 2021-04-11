@@ -48,7 +48,6 @@ func (this *Form) SetFile(name,file string) *Form  {
 }
 
 func (this *Form) GetData() string {
-	fmt.Println(this.dataBuf)
 	return this.dataStr
 }
 
