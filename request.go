@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 )
 
@@ -190,10 +191,14 @@ func (this *Request) EndFile(savePath,saveFileName string) (*http.Response,error
 			saveFileName=path[len(path)-1]
 		}
 	}
+	f,err:=os.Create(savePath+saveFileName)
+	if err!=nil {
+		return nil,errors.New(err.Error())
+	}
+	defer f.Close()
 
-	bodyByte,_:=ioutil.ReadAll(this.response.Body)
+	_,err=io.Copy(f,this.response.Body)
 	_=this.response.Body.Close()
-	err:= ioutil.WriteFile(savePath+saveFileName, bodyByte, 0777)
 	if err!=nil {
 		return nil,errors.New(err.Error())
 	}
