@@ -31,11 +31,6 @@ func (this *HttpClient) SetSkipVerify(isSkipVerify bool) {
 	this.transport.TLSClientConfig=&tls.Config{InsecureSkipVerify: isSkipVerify}
 }
 
-func (this *HttpClient) SetTransport(t *http.Transport) *HttpClient {
-	this.client.Transport=t
-	return this
-}
-
 func (this *HttpClient) SetTimeout(t time.Duration) *HttpClient {
 	this.client.Timeout=t
 	return this

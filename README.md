@@ -3,10 +3,6 @@ httpc
 [![GoDoc](https://godoc.org/github.com/Albert-Zhan/goreq?status.svg)](https://godoc.org/github.com/Albert-Zhan/httpc)
 [![License](https://img.shields.io/badge/license-apache2-blue.svg)](LICENSE)
 
-> ⚠ 感谢ztino的使用，让该项目让更多人知道，由于设计初期没有考虑很长远的架构，现在想扩展一些功能比较困难，和历史遗留问题难以优雅解决，所以后面打算重构该项目，尽量保证使用上不做太多的变更。
-
-> ⚠ 重构后会增强httpc客户端很多功能，目前包括多协程下载文件，断点续传，断点下载，和chromedp的引入，还有该项目立的flag的完善
-
 **Go的一个功能强大、易扩展、易使用的http客户端请求库。适合用于接口请求，模拟浏览器请求，爬虫请求。**
 
 ## 特点
@@ -14,7 +10,6 @@ httpc
 - Cookie管理器(适合爬虫和模拟请求)
 - 支持HEADER、GET、POST、PUT、DELETE
 - 轻松上传文件下载文件
-- 支持断点下载断点续传(开发中)
 - 支持链式调用
 
 ## 安装
@@ -62,7 +57,7 @@ if err!=nil {
 }
 ```
 
-### 3. 设置请求信息
+### 3. 设置请求信息(get)
 
 ```go
 //新建一个http客户端
@@ -73,7 +68,7 @@ req.SetMethod("post").SetUrl("http://127.0.0.1")
 //设置头信息
 req.SetHeader("HOST","127.0.0.1")
 //设置请求信息
-resp,body,err:=req.SetData("client", "httpc").Send().End()
+resp,body,err:=req.SetParam("client", "httpc").Send().End()
 if err!=nil {
     fmt.Println(err)
 }else{
@@ -82,7 +77,29 @@ if err!=nil {
 }
 ```
 
-### 4. 设置Cookie
+### 4. 设置请求信息(post)
+
+```go
+//新建一个http客户端
+client:=httpc.NewHttpClient()
+//新建一个请求
+req:=httpc.NewRequest(client)
+req.SetMethod("post").SetUrl("http://127.0.0.1")
+//设置头信息
+req.SetHeader("HOST","127.0.0.1")
+//设置请求信息
+b:=body.NewUrlEncode()
+b.SetData("client","httpc")
+resp,body,err:=req.SetBody(b).Send().End()
+if err!=nil {
+    fmt.Println(err)
+}else{
+    fmt.Println(resp)
+    fmt.Println(body)
+}
+```
+
+### 5. 设置Cookie
 
 ```go
 //新建一个http客户端
@@ -106,7 +123,7 @@ if err!=nil {
 }
 ```
 
-### 5. 上传文件
+### 6. 上传文件
 
 ```go
 //新建一个http客户端
@@ -115,10 +132,11 @@ client:=httpc.NewHttpClient()
 req:=httpc.NewRequest(client)
 req.SetMethod("post").SetUrl("http://127.0.0.1")
 //设置上传的文件
-req.SetFileData("img1","./img.png",true)
+b:=body.NewFormData()
+b.SetFile("img1","./img.png")
 //设置附加参数
-req.SetFileData("client","httpc",false)
-resp,body,err:=req.Send(true).End()
+b.SetData("client","httpc")
+resp,body,err:=req.SetBody(b).Send().End()
 if err!=nil {
     fmt.Println(err)
 }else{
@@ -127,7 +145,7 @@ if err!=nil {
 }
 ```
 
-### 6. 下载文件
+### 7. 下载文件
 
 ```go
 //新建一个http客户端
@@ -135,7 +153,7 @@ client:=httpc.NewHttpClient()
 //新建一个请求
 req:=httpc.NewRequest(client)
 //请求保存文件
-resp,body,err:=req.SetUrl("http://127.0.0.1/1.zip").Send().EndFile("./test.zip")
+resp,body,err:=req.SetUrl("http://127.0.0.1/1.zip").Send().EndFile("./test/","")
 if err!=nil {
     fmt.Println(err)
 }else{
@@ -144,17 +162,18 @@ if err!=nil {
 }
 ```
 
-### 7. 开启调试
+### 8. 开启调试
 
 ```go
 req:=httpc.NewRequest(httpc.NewHttpClient())
 req.SetMethod("post").SetUrl("https://127.0.0.1")
 req.SetHeader("HOST","127.0.0.1")
-req.SetData("client","httpc")
+b:=body.NewUrlEncode()
+b.SetData("client","httpc")
 var cookies []*http.Cookie
 cookie:=&http.Cookie{Name:"client",Value:"httpc"}
 cookies= append(cookies, cookie)
-_, _, _ = req.SetCookies(&cookies).SetDebug(true).Send().End()
+_, _, _ = req.SetBody(b).SetCookies(&cookies).SetDebug(true).Send().End()
 ```
 
 > ⚠ 在实际场景中不建议复用Request，建议每个请求对应一个Request。
@@ -168,6 +187,8 @@ _, _, _ = req.SetCookies(&cookies).SetDebug(true).Send().End()
 client:=httpc.NewHttpClient()
 //设置请求超时,默认值为30秒
 client.SetTimeout(5*time.Second)
+//不设置超时
+//client.SetTimeout(0)
 //新建一个请求
 req:=httpc.NewRequest(client)
 req.SetMethod("post").SetUrl("http://127.0.0.1")
@@ -207,20 +228,13 @@ if err!=nil {
 }
 ```
 
-### 3. 设置传输连接参数
+### 3. 设置代理
 
 ```go
 //新建http客户端
 client:=httpc.NewHttpClient()
-//设置连接传输参数
-client.SetTransport(&http.Transport{
-    Proxy:                 http.ProxyFromEnvironment,
-    MaxIdleConns:          100,
-    IdleConnTimeout:       30 * time.Second,
-    TLSHandshakeTimeout:   10 * time.Second,
-    ExpectContinueTimeout: 1 * time.Second,
-    ResponseHeaderTimeout: 10 * time.Second,
-})
+//设置请求代理
+client.SetProxy("http://127.0.0.1:10809")
 //新建一个请求
 req:=httpc.NewRequest(client)
 req.SetMethod("post").SetUrl("http://127.0.0.1")
@@ -243,6 +257,26 @@ client:=httpc.NewHttpClient()
 client.SetRedirect(func(req *http.Request, via []*http.Request) error {
     return http.ErrUseLastResponse
 })
+//新建一个请求
+req:=httpc.NewRequest(client)
+req.SetMethod("post").SetUrl("http://127.0.0.1")
+//设置头信息,返回byte类型的body
+resp,bodyByte,err:=req.SetHeader("HOST","127.0.0.1").Send().EndByte()
+if err!=nil {
+    fmt.Println(err)
+}else{
+    fmt.Println(resp)
+    fmt.Println(bodyByte)
+}
+```
+
+### 5. 设置ssl验证
+
+```go
+//新建http客户端
+client:=httpc.NewHttpClient()
+//跳过ssl验证
+client.SetSkipVerify(false)
 //新建一个请求
 req:=httpc.NewRequest(client)
 req.SetMethod("post").SetUrl("http://127.0.0.1")
