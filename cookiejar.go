@@ -14,7 +14,6 @@ import (
 )
 
 type CookieJar struct {
-
 	mu sync.Mutex
 
 	entries map[string]map[string]entry
@@ -43,7 +42,7 @@ type entry struct {
 	Expires    time.Time
 	Creation   time.Time
 	LastAccess time.Time
-	seqNum uint64
+	seqNum     uint64
 }
 
 func (e *entry) id() string {
@@ -148,7 +147,7 @@ func (j *CookieJar) cookies(u *url.URL, now time.Time) (cookies []*http.Cookie) 
 	})
 	for _, e := range selected {
 		//修复了读取cookie时缺少Domain,造成读取后的cookie请求失效问题
-		cookies = append(cookies, &http.Cookie{Name: e.Name, Value: e.Value,Domain:e.Domain})
+		cookies = append(cookies, &http.Cookie{Name: e.Name, Value: e.Value, Domain: e.Domain})
 	}
 
 	return cookies
@@ -256,7 +255,7 @@ func jarKey(host string) string {
 		return host
 	}
 
-	i :=strings.LastIndex(host, ".")
+	i := strings.LastIndex(host, ".")
 	if i <= 0 {
 		return host
 	}
