@@ -13,7 +13,10 @@ type HttpClient struct {
 }
 
 func NewHttpClient() *HttpClient {
-	tr := &http.Transport{}
+	tr := &http.Transport{
+		MaxIdleConns: 200,
+		MaxIdleConnsPerHost: 50,
+	}
 
 	client := &http.Client{
 		Transport: tr,
