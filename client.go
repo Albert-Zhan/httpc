@@ -7,22 +7,32 @@ import (
 	"time"
 )
 
+var defaultTransport = &http.Transport{
+	MaxIdleConns:          200,
+	MaxIdleConnsPerHost:   50,
+	MaxConnsPerHost:       100,
+	ResponseHeaderTimeout: 15 * time.Second,
+	TLSClientConfig: &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	},
+}
+
 type HttpClient struct {
 	client    *http.Client
 	transport *http.Transport
 }
 
 func NewHttpClient() *HttpClient {
-	tr := &http.Transport{
-		MaxIdleConns: 200,
-		MaxIdleConnsPerHost: 50,
-	}
-
 	client := &http.Client{
-		Transport: tr,
+		Transport: defaultTransport,
 		Timeout:   30 * time.Second,
 	}
-	return &HttpClient{client: client, transport: tr}
+	return &HttpClient{client: client, transport: defaultTransport}
+}
+
+func (this *HttpClient) CustomizeTransport(f func(tr *http.Transport)) *HttpClient {
+	f(this.transport)
+	return this
 }
 
 func (this *HttpClient) SetProxy(proxyUrl string) *HttpClient {
@@ -37,7 +47,7 @@ func (this *HttpClient) ClearProxy() *HttpClient {
 }
 
 func (this *HttpClient) SetSkipVerify(isSkipVerify bool) *HttpClient {
-	this.transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: isSkipVerify}
+	this.transport.TLSClientConfig.InsecureSkipVerify = isSkipVerify
 	return this
 }
 
