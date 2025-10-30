@@ -1,6 +1,7 @@
 package httpc
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"encoding/base64"
@@ -152,40 +153,48 @@ func (this *Request) log() {
 }
 
 func (this *Request) End() (*http.Response, string, error) {
-	if this.err != nil {
-		return nil, "", errors.New(this.err.Error())
+	resp, bodyByte, err := this.EndByte()
+	if err != nil {
+		return resp, "", err
 	}
-
-	var bodyByte []byte
-
-	if strings.ToLower(this.response.Header.Get("Content-Encoding")) == "gzip" {
-		reader, _ := gzip.NewReader(this.response.Body)
-		bodyByte, _ = io.ReadAll(reader)
-		_ = reader.Close()
-	} else {
-		bodyByte, _ = io.ReadAll(this.response.Body)
-	}
-
-	_ = this.response.Body.Close()
-	return this.response, string(bodyByte), nil
+	return resp, string(bodyByte), nil
 }
 
 func (this *Request) EndByte() (*http.Response, []byte, error) {
 	if this.err != nil {
-		return nil, []byte(""), errors.New(this.err.Error())
+		return nil, nil, this.err
 	}
 
-	var bodyByte []byte
+	defer func() {
+		_ = this.response.Body.Close()
+	}()
 
-	if strings.ToLower(this.response.Header.Get("Content-Encoding")) == "gzip" {
-		reader, _ := gzip.NewReader(this.response.Body)
-		bodyByte, _ = io.ReadAll(reader)
-		_ = reader.Close()
+	var (
+		bodyByte []byte
+		err      error
+	)
+
+	encoding := strings.ToLower(this.response.Header.Get("Content-Encoding"))
+	if strings.Contains(encoding, "gzip") {
+		var gzReader *gzip.Reader
+		gzReader, err = gzip.NewReader(this.response.Body)
+		if err != nil {
+			return this.response, nil, errors.New("gzip decode failed:" + err.Error())
+		}
+		defer gzReader.Close()
+
+		var buf bytes.Buffer
+		if _, err = io.Copy(&buf, gzReader); err != nil {
+			return this.response, nil, errors.New("gzip read failed:" + err.Error())
+		}
+		bodyByte = buf.Bytes()
 	} else {
-		bodyByte, _ = io.ReadAll(this.response.Body)
+		bodyByte, err = io.ReadAll(this.response.Body)
+		if err != nil {
+			return this.response, nil, errors.New("read body failed:" + err.Error())
+		}
 	}
 
-	_ = this.response.Body.Close()
 	return this.response, bodyByte, nil
 }
 
