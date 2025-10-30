@@ -7,22 +7,21 @@ import (
 	"time"
 )
 
-var defaultTransport = &http.Transport{
-	MaxIdleConns:          200,
-	MaxIdleConnsPerHost:   50,
-	MaxConnsPerHost:       100,
-	ResponseHeaderTimeout: 15 * time.Second,
-	TLSClientConfig: &tls.Config{
-		MinVersion: tls.VersionTLS12,
-	},
-}
-
 type HttpClient struct {
 	client    *http.Client
 	transport *http.Transport
 }
 
 func NewHttpClient() *HttpClient {
+	defaultTransport := &http.Transport{
+		MaxIdleConns:          200,
+		MaxIdleConnsPerHost:   50,
+		MaxConnsPerHost:       100,
+		ResponseHeaderTimeout: 15 * time.Second,
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+		},
+	}
 	client := &http.Client{
 		Transport: defaultTransport,
 		Timeout:   30 * time.Second,
