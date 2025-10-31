@@ -7,11 +7,11 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 type Form struct {
 	dataBuf *bytes.Buffer
-	dataStr string
 	data    *multipart.Writer
 }
 
@@ -20,7 +20,6 @@ func NewFormData() *Form {
 	bodyWriter := multipart.NewWriter(bodyBuf)
 	return &Form{
 		dataBuf: bodyBuf,
-		dataStr: "",
 		data:    bodyWriter,
 	}
 }
@@ -37,17 +36,47 @@ func (this *Form) SetData(name, value string) *Form {
 
 func (this *Form) SetFile(name, file string) *Form {
 	fd, err := os.Open(file)
-	defer fd.Close()
 	if err != nil {
 		panic("file does not exist")
 	}
+	defer fd.Close()
 	fileWriter, _ := this.data.CreateFormFile(name, filepath.Base(file))
 	_, _ = io.Copy(fileWriter, fd)
 	return this
 }
 
 func (this *Form) GetData() string {
-	return this.dataStr
+	b := this.dataBuf.Bytes()
+	br := bytes.NewReader(b)
+	r := multipart.NewReader(br, this.data.Boundary())
+	form, err := r.ReadForm(32 << 20)
+	if err == nil {
+		var sb strings.Builder
+		boundary := this.data.Boundary()
+		header := fmt.Sprintf("--%s\r\n", boundary)
+		footer := fmt.Sprintf("--%s--", boundary)
+
+		for k, v := range form.Value {
+			sb.WriteString(header)
+			sb.WriteString(fmt.Sprintf(`Content-Disposition: form-data; name="%s"`, k))
+			sb.WriteString("\r\n")
+			sb.WriteString(v[0])
+			sb.WriteString("\r\n")
+		}
+
+		for fk, fv := range form.File {
+			for _, fh := range fv {
+				sb.WriteString(header)
+				sb.WriteString(fmt.Sprintf(
+					`Content-Disposition: form-data; name="%s"; filename="%s"`, fk, fh.Filename))
+				sb.WriteString("\r\n")
+				sb.WriteString(fmt.Sprintf("Content-Type: %s\r\n", fh.Header.Get("Content-Type")))
+			}
+		}
+		sb.WriteString(footer)
+		return sb.String()
+	}
+	return ""
 }
 
 func (this *Form) GetContentType() string {
@@ -56,23 +85,5 @@ func (this *Form) GetContentType() string {
 
 func (this *Form) Encode() io.Reader {
 	_ = this.data.Close()
-
-	r := multipart.NewReader(this.dataBuf, this.data.Boundary())
-	f, err := r.ReadForm(0)
-	if err == nil {
-		header := "--" + this.data.Boundary() + "\n"
-		dataStr := header
-		foot := "--" + this.data.Boundary() + "--"
-		for k, v := range f.Value {
-			dataStr += fmt.Sprintf(`Content-Disposition: form-data; name="%s"`, k) + "\n"
-			dataStr += v[0] + "\n"
-		}
-		for fk, fv := range f.File {
-			dataStr += fmt.Sprintf(`Content-Disposition: form-data; name="%s"; filename="%s" Content-Type: application/octet-stream`, fk, fv[0].Filename) + "\n"
-			dataStr += fmt.Sprintf("%v", fv) + "\n"
-		}
-		dataStr += foot
-		this.dataStr = dataStr
-	}
 	return io.NopCloser(this.dataBuf)
 }
