@@ -109,7 +109,6 @@ func (this *Request) Send(ctxs ...context.Context) *Request {
 	}
 
 	this.request, this.err = http.NewRequestWithContext(ctx, this.method, this.url, data)
-	defer this.log()
 	if this.err != nil {
 		return this
 	}
@@ -123,6 +122,8 @@ func (this *Request) Send(ctxs ...context.Context) *Request {
 	for _, v := range *this.cookies {
 		this.request.AddCookie(v)
 	}
+
+	this.log()
 
 	this.response, this.err = this.httpc.client.Do(this.request)
 	if this.err != nil {
