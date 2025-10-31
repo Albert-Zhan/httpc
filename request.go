@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -200,29 +201,41 @@ func (this *Request) EndByte() (*http.Response, []byte, error) {
 
 func (this *Request) EndFile(savePath, saveFileName string) (*http.Response, error) {
 	if this.err != nil {
-		return nil, errors.New(this.err.Error())
+		return nil, this.err
 	}
 
 	if this.response.StatusCode != http.StatusOK {
-		return nil, errors.New("Not written")
+		return this.response, errors.New("failed to write: server responded with non-200 status")
 	}
+
+	defer func() {
+		_ = this.response.Body.Close()
+	}()
 
 	if saveFileName == "" {
-		path := strings.Split(this.request.URL.String(), "/")
-		if len(path) > 1 {
-			saveFileName = path[len(path)-1]
+		u, err := url.Parse(this.request.URL.String())
+		if err == nil {
+			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+			if len(parts) > 0 {
+				saveFileName = parts[len(parts)-1]
+			}
+		}
+		if saveFileName == "" {
+			saveFileName = "download.tmp"
 		}
 	}
-	f, err := os.Create(savePath + saveFileName)
-	if err != nil {
-		return nil, errors.New(err.Error())
-	}
-	defer f.Close()
 
-	_, err = io.Copy(f, this.response.Body)
-	_ = this.response.Body.Close()
+	destPath := filepath.Join(savePath, saveFileName)
+	file, err := os.Create(destPath)
 	if err != nil {
-		return nil, errors.New(err.Error())
+		return this.response, err
+	}
+	defer func() {
+		_ = file.Close()
+	}()
+	_, err = io.Copy(file, this.response.Body)
+	if err != nil {
+		return this.response, err
 	}
 
 	return this.response, nil
