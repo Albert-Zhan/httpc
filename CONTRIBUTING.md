@@ -12,7 +12,7 @@ go test -race -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out 
 go tool cover -func=coverage.out
 ```
 
-竞态检查需要启用 CGO 并安装 C 编译器。GitHub 托管 runner 已提供相应环境。
+竞态检查需要启用 CGO 并安装 C 编译器。GitHub 托管 runner 已提供相应环境。文本文件通过 `.gitattributes` 统一使用 LF 换行；CI 在检出历史提交时也关闭自动 CRLF 转换。
 
 修复缺陷时添加能复现问题的回归测试；新增公共 API 时覆盖正常行为和关键错误路径。测试优先使用 `httptest`、本地临时文件或自定义 Transport，避免依赖公网服务、真实凭据和固定等待时间。
 
