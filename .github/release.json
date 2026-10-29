@@ -1,0 +1,6 @@
+{
+  "tag_name": "v1.2.0",
+  "target_commitish": "ca43d4e5537180b696d923076ed9ed68733205e5",
+  "name": "v1.2.0",
+  "body": "## 更新内容\n\n- CookieJar 改用 Go 标准库 `net/http/cookiejar`，移除复制维护的实现。\n- `SetCookieJar` 接受 `http.CookieJar` 接口，可直接使用标准库 Jar 或自定义实现。\n- 保留 `httpc.CookieJar` 类型名与 `httpc.NewCookieJar()` 用法，支持通过 `SetCookieJar(nil)` 关闭自动 Cookie 管理。\n- 最低 Go 版本提升至 **Go 1.27**。\n- 重新整理 README，更新请求、Cookie、文件传输和客户端配置示例。\n\n## 使用说明\n\nCookie 的默认 Path 遵循标准库规则。例如 `/account/login` 返回的 Cookie 未指定有效 Path 时，默认用于 `/account` 及其子路径；需要全站使用时应显式设置 `Path=/`。\n\n`jar.Cookies(u)` 返回适合请求使用的 Cookie，不提供完整的存储属性；需要响应中的原始属性时请读取 `resp.Cookies()`。\n\n## 安装\n\n```sh\ngo get github.com/Albert-Zhan/httpc@v1.2.0\n```\n\n完整变更：https://github.com/Albert-Zhan/httpc/compare/v1.1.6...v1.2.0\n"
+}

@@ -1,0 +1,103 @@
+name: Publish release
+
+on:
+  push:
+    branches: [master]
+    paths: [.github/release.json]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: publish-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the version in .github/release.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          GH_API_URL: ${{ github.api_url }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import re
+          from pathlib import Path
+          from urllib.error import HTTPError
+          from urllib.request import Request, urlopen
+
+          root = f"/repos/{os.environ['GH_REPO']}"
+
+          def api(path, data=None, missing_ok=False):
+              request = Request(
+                  os.environ['GH_API_URL'] + root + path,
+                  data=json.dumps(data).encode() if data is not None else None,
+                  headers={
+                      'Authorization': f"Bearer {os.environ['GH_TOKEN']}",
+                      'Accept': 'application/vnd.github+json',
+                      'Content-Type': 'application/json',
+                      'X-GitHub-Api-Version': '2022-11-28',
+                  },
+              )
+              try:
+                  with urlopen(request, timeout=30) as response:
+                      return json.load(response)
+              except HTTPError as error:
+                  if missing_ok and error.code == 404:
+                      return None
+                  raise SystemExit(f"GitHub API request failed: {path} (HTTP {error.code})")
+
+          content = api(f"/contents/.github/release.json?ref={os.environ['GITHUB_SHA']}")
+          config = json.loads(base64.b64decode(content['content']))
+          tag = config['tag_name']
+          target = config['target_commitish']
+          if not isinstance(tag, str) or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
+              raise SystemExit('tag_name must be a stable version such as v1.2.0')
+          if not isinstance(target, str) or not re.fullmatch(r'[0-9a-f]{40}', target):
+              raise SystemExit('target_commitish must be a full commit SHA')
+          for field in ('name', 'body'):
+              if not isinstance(config[field], str) or not config[field].strip():
+                  raise SystemExit(f'{field} must be a non-empty string')
+
+          comparison = api(f"/compare/{target}...{os.environ['GITHUB_SHA']}")
+          if comparison['status'] not in ('ahead', 'identical'):
+              raise SystemExit('Release target must be an ancestor of this master commit')
+
+          existing_tag = api(f'/git/ref/tags/{tag}', missing_ok=True)
+          if existing_tag and api(f'/commits/{tag}')['sha'] != target:
+              raise SystemExit('Existing tag points to another commit; refusing to move it')
+          release = api(f'/releases/tags/{tag}', missing_ok=True)
+          if release:
+              if release['draft'] or release['prerelease']:
+                  raise SystemExit('An unpublished or prerelease version already exists')
+              if not existing_tag:
+                  raise SystemExit('Existing release has no matching tag')
+              print(f"Already published: {release['html_url']}")
+          else:
+              release = api('/releases', {
+                  'tag_name': tag,
+                  'target_commitish': target,
+                  'name': config['name'],
+                  'body': config['body'],
+                  'draft': False,
+                  'prerelease': False,
+                  'make_latest': 'true',
+              })
+              print(f"Published: {release['html_url']}")
+
+          if api(f'/commits/{tag}')['sha'] != target:
+              raise SystemExit('Published tag does not match the requested commit')
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(
+              f"## {tag}\n\nRelease: {release['html_url']}\n\nCommit: `{target}`\n"
+          )
+          PY
