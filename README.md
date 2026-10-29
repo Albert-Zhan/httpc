@@ -8,13 +8,13 @@ httpc 是一个支持链式调用的 Go HTTP 客户端库，提供请求构建�
 
 ## 安装
 
-需要 **Go 1.27 或更新版本**。本文对应主分支，使用本文中的 API 请安装主分支版本：
+需要 **Go 1.27 或更新版本**。在 Go 模块项目中安装：
 
 ```sh
-go get github.com/Albert-Zhan/httpc@master
+go get github.com/Albert-Zhan/httpc@v1.4.0
 ```
 
-使用发布版本时，请在 [Releases](https://github.com/Albert-Zhan/httpc/releases) 选择版本标签，并参考对应标签下的 README。[完整 API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc) 默认展示已发布版本。
+[完整 API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc) · [发布版本](https://github.com/Albert-Zhan/httpc/releases)
 
 ## 快速开始
 
