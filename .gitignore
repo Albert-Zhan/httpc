@@ -1,2 +1,53 @@
-/.idea
+# Go build and test artifacts
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.prof
+*.coverprofile
+/bin/
+/build/
+/dist/
+/coverage/
+/coverage.out
+/coverage.html
+/coverage-*.out
+
+# Local Go workspace
+/go.work
+/go.work.sum
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Local configuration (keep templates trackable)
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+!.env.*.example
+!.env.*.sample
+!.env.*.template
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+/tmp/
+
+# Local manual tests
 /test
