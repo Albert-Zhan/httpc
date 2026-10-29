@@ -68,8 +68,9 @@ func (this *HttpClient) SetTimeout(t time.Duration) *HttpClient {
 }
 
 // SetCookieJar 为客户端设置 CookieJar，用于管理 Cookie
-// CookieJar 会自动存储与发送 Cookie
-func (this *HttpClient) SetCookieJar(j *CookieJar) *HttpClient {
+// 接受标准库 net/http/cookiejar.Jar 或其他 http.CookieJar 实现。
+// CookieJar 会自动存储与发送 Cookie；传入 nil 可禁用 Cookie 管理。
+func (this *HttpClient) SetCookieJar(j http.CookieJar) *HttpClient {
 	this.client.Jar = j
 	return this
 }

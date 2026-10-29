@@ -302,6 +302,26 @@ if err!=nil {
 
 复用同一个客户端创建后续请求时，CookieJar会自动保存响应中的Cookie，并为匹配的请求发送Cookie；`Request.SetCookies`则用于手动设置当前请求的Cookie。
 
+`httpc.NewCookieJar()`使用Go标准库`net/http/cookiejar`，`httpc.CookieJar`是`cookiejar.Jar`的类型别名。也可以直接传入标准库Jar或其他实现了`http.CookieJar`接口的对象：
+
+```go
+//另需导入 "net/http/cookiejar"
+jar,err:=cookiejar.New(nil)
+if err!=nil {
+    panic(err)
+}
+client:=httpc.NewHttpClient().SetCookieJar(jar)
+//禁用自动Cookie管理：client.SetCookieJar(nil)
+```
+
+Cookie作用域遵循标准库规则，与旧版复制实现存在以下区别：
+
+- `jar.Cookies(u)`返回适合向`u`发送的Cookie，不保留`Domain`、`Path`、`Expires`等完整属性。请求头只需要名称和值，无需手动补`Domain`；需要响应原始属性时应读取`resp.Cookies()`，不要将`jar.Cookies(u)`当作完整的Cookie导出或持久化接口。
+- 响应未指定有效`Path`时，默认作用域为响应URL的目录。例如`/account/login`设置的Cookie默认用于`/account`及其子路径，不会发送到`/api`。确实需要全站使用时，服务端应设置`Path=/`；手动调用`jar.SetCookies`时也可显式指定`Path: "/"`。原来依赖自动扩展到根路径的代码需要调整。
+- `.example.com.cn`等多级域名可由标准库正常匹配。`NewCookieJar()`与`cookiejar.New(nil)`均未配置公共后缀列表；需要阻止向`.com.cn`等公共后缀设置Cookie时，可使用`golang.org/x/net/publicsuffix.List`作为`cookiejar.Options.PublicSuffixList`构造标准库Jar，再传给`SetCookieJar`。
+
+详情参见[标准库cookiejar文档](https://pkg.go.dev/net/http/cookiejar)。
+
 ### 3. 设置代理
 
 ```go
