@@ -24,7 +24,7 @@ type Request struct {
 	method   string
 	url      string
 	param    *url.Values
-	header   map[string]string
+	header   http.Header
 	cookies  *[]*http.Cookie
 	data     body.Body
 	debug    bool
@@ -37,7 +37,7 @@ func NewRequest(client *HttpClient) *Request {
 		httpc:   client,
 		method:  "GET",
 		param:   &url.Values{},
-		header:  make(map[string]string),
+		header:  make(http.Header),
 		cookies: new([]*http.Cookie),
 		debug:   false,
 		err:     nil,
@@ -68,9 +68,15 @@ func (this *Request) SetParam(name, value string) *Request {
 	return this
 }
 
-// SetHeader 添加或修改请求头，支持多次链式调用
+// SetHeader 设置请求头，覆盖同名头的全部旧值；名称不区分大小写。
 func (this *Request) SetHeader(name, value string) *Request {
-	this.header[name] = value
+	this.header.Set(name, value)
+	return this
+}
+
+// AddHeader 追加请求头的一个值，保留同名头的已有值；名称不区分大小写。
+func (this *Request) AddHeader(name, value string) *Request {
+	this.header.Add(name, value)
 	return this
 }
 
@@ -78,8 +84,7 @@ func (this *Request) SetHeader(name, value string) *Request {
 func (this *Request) SetBasicAuth(username, password string) *Request {
 	auth := username + ":" + password
 	value := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
-	this.header["Authorization"] = value
-	return this
+	return this.SetHeader("Authorization", value)
 }
 
 // SetCookies 设置请求的 Cookie 列表
@@ -162,11 +167,9 @@ func (this *Request) Send(ctxs ...context.Context) *Request {
 		return this
 	}
 
-	if contentType != "" {
+	this.request.Header = this.header.Clone()
+	if _, explicit := this.request.Header["Content-Type"]; contentType != "" && !explicit {
 		this.request.Header.Set("Content-Type", contentType)
-	}
-	for k, v := range this.header {
-		this.request.Header.Set(k, v)
 	}
 	for _, v := range *this.cookies {
 		this.request.AddCookie(v)

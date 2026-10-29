@@ -70,6 +70,8 @@ resp, text, err := httpc.NewRequest(client).
 	SetUrl("https://example.com/search").
 	SetMethod("get").
 	SetHeader("Accept", "application/json").
+	AddHeader("X-Tag", "go").
+	AddHeader("x-tag", "httpc").
 	SetParam("q", "httpc").
 	SetParam("page", "1").
 	Send().End()
@@ -81,6 +83,8 @@ fmt.Println(resp.StatusCode, text)
 ```
 
 `SetParam` 添加 URL 查询参数；POST 表单和 JSON 等内容通过 `SetBody` 设置。
+
+请求头名称不区分大小写。`SetHeader` 覆盖同名头的全部旧值，后一次设置生效；`AddHeader` 保留旧值并追加新值，上例的 `X-Tag` 会保留 `go` 和 `httpc` 两个值。`SetBasicAuth` 与手动设置 `Authorization` 也遵循后一次覆盖的规则。手动设置的 `Content-Type` 优先于请求体自动提供的类型。
 
 ### URL 编码表单
 
