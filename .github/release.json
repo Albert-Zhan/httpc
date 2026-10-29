@@ -1,6 +1,6 @@
 {
-  "tag_name": "v1.2.0",
-  "target_commitish": "ca43d4e5537180b696d923076ed9ed68733205e5",
-  "name": "v1.2.0",
-  "body": "## 更新内容\n\n- CookieJar 改用 Go 标准库 `net/http/cookiejar`，移除复制维护的实现。\n- `SetCookieJar` 接受 `http.CookieJar` 接口，可直接使用标准库 Jar 或自定义实现。\n- 保留 `httpc.CookieJar` 类型名与 `httpc.NewCookieJar()` 用法，支持通过 `SetCookieJar(nil)` 关闭自动 Cookie 管理。\n- 最低 Go 版本提升至 **Go 1.27**。\n- 重新整理 README，更新请求、Cookie、文件传输和客户端配置示例。\n\n## 使用说明\n\nCookie 的默认 Path 遵循标准库规则。例如 `/account/login` 返回的 Cookie 未指定有效 Path 时，默认用于 `/account` 及其子路径；需要全站使用时应显式设置 `Path=/`。\n\n`jar.Cookies(u)` 返回适合请求使用的 Cookie，不提供完整的存储属性；需要响应中的原始属性时请读取 `resp.Cookies()`。\n\n## 安装\n\n```sh\ngo get github.com/Albert-Zhan/httpc@v1.2.0\n```\n\n完整变更：https://github.com/Albert-Zhan/httpc/compare/v1.1.6...v1.2.0\n"
+  "tag_name": "v1.3.0",
+  "target_commitish": "ed71cffb2ee33ab61bf896fa0622dcf4cc26a725",
+  "name": "v1.3.0",
+  "body": "## 更新内容\n\n- 修复查询参数合并，正确处理已有查询字符串、重复参数和 URL fragment。\n- 修复下载收到非 200 响应时未关闭响应体的问题。\n- 校验代理地址，错误配置返回明确错误，避免意外退回直连。\n- 文件上传构建失败时返回错误，替代 panic；保留底层错误链。\n- 新增 `httpc.Error` 和分类错误，支持 `errors.Is(err, httpc.ErrXXX)`、`errors.As`。\n- 未调用 `Send()` 就读取结果时返回 `ErrInvalidRequest`。\n- 请求头改用 `http.Header`，统一大小写处理；新增 `AddHeader` 支持多值请求头。\n- 补齐 Transport 默认配置，支持 HTTP/2、空闲连接回收等。\n- 新增 `SetDebugOutput` 和 `AddDebugSensitiveFields`，可指定日志输出位置及需要脱敏的字段。\n- 新增 `CloseIdleConnections()`，完善客户端复用、请求和表单并发使用说明。\n- JSON 处理切换为 Go 标准库 `encoding/json/v2`，脱敏时保留 JSON 数字精度。\n- 补充回归测试及 README 示例。\n\n## 使用说明\n\n- 最低 Go 版本保持为 **Go 1.27**。\n- 调试默认关闭；通过 `SetDebug(true)` 开启后，默认不脱敏。仅 `AddDebugSensitiveFields(...)` 指定的字段会脱敏，字段名匹配忽略大小写与分隔符。\n- 客户端配置完成后可以并发复用；`Request`、`Form` 为可变对象，应为每个请求独立创建。\n\n## 验证\n\n已通过 Go 1.27.0 下的 `go test -race ./...` 和 `go vet ./...`。\n\n## 安装\n\n```sh\ngo get github.com/Albert-Zhan/httpc@v1.3.0\n```\n\n完整变更：https://github.com/Albert-Zhan/httpc/compare/v1.2.0...v1.3.0\n"
 }
