@@ -13,7 +13,64 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  prepare:
+    name: Validate release target
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      target: ${{ steps.config.outputs.target }}
+    steps:
+      - name: Check out release configuration and history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release configuration
+        id: config
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          config = json.loads(Path('.github/release.json').read_text())
+          tag = config['tag_name']
+          target = config['target_commitish']
+          if not isinstance(tag, str) or not re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+', tag):
+              raise SystemExit('tag_name must be a stable version such as v1.3.0')
+          if not isinstance(target, str) or not re.fullmatch(r'[0-9a-f]{40}', target):
+              raise SystemExit('target_commitish must be a full commit SHA')
+          for field in ('name', 'body'):
+              if not isinstance(config[field], str) or not config[field].strip():
+                  raise SystemExit(f'{field} must be a non-empty string')
+          subprocess.run(
+              ['git', 'merge-base', '--is-ancestor', target, os.environ['GITHUB_SHA']],
+              check=True,
+          )
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'target={target}\n')
+          PY
+
+  checks:
+    name: Validate release commit
+    needs: prepare
+    permissions:
+      contents: read
+    uses: ./.github/workflows/check.yml
+    with:
+      ref: ${{ needs.prepare.outputs.target }}
+
   release:
+    name: Publish validated release
+    needs: [prepare, checks]
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
     timeout-minutes: 5

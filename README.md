@@ -374,6 +374,10 @@ if err != nil {
 
 `GetError()` 保留最近一次发送或读取失败的错误。`End()` 和 `EndByte()` 不把 4xx/5xx 状态码视为错误，需要调用者检查 `resp.StatusCode`；`ErrHTTPStatus` 仅用于要求 `200 OK` 的 `EndFile()`。未调用 `Send()` 就读取响应时，会返回 `ErrInvalidRequest`。
 
+## 开发与发布
+
+测试规范、本地检查命令、CI 和版本发布流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
 ## License
 
 [Apache License 2.0](LICENSE)
