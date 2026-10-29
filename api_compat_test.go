@@ -12,7 +12,7 @@ import (
 	"github.com/Albert-Zhan/httpc/body"
 )
 
-// Function and method values using the original types must remain assignable.
+// 编译期检查新旧 API 的函数和方法签名兼容。
 var (
 	_ func() *httpc.HttpClient                    = httpc.NewClient
 	_ func() *httpc.Client                        = httpc.NewHttpClient

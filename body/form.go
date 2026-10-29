@@ -9,9 +9,7 @@ import (
 	"path/filepath"
 )
 
-// Form 用于构建 multipart/form-data 类型的表单请求体
-// 支持添加普通字段与文件字段，并最终编码为可用于 HTTP 请求的 io.Reader
-// Form 包含可变构建状态，不支持并发修改或在多个请求之间并发共享。
+// Form 构建包含普通字段和文件的 multipart/form-data 正文，不支持并发共享。
 type Form struct {
 	dataBuf *bytes.Buffer
 	data    *multipart.Writer
@@ -19,8 +17,7 @@ type Form struct {
 	closed  bool
 }
 
-// NewFormData 创建一个新的 Form 实例
-// 返回的 Form 可用于设置字段、文件内容并生成 multipart/form-data 请求体
+// NewFormData 创建空的 multipart 表单。
 func NewFormData() *Form {
 	bodyBuf := &bytes.Buffer{}
 	bodyWriter := multipart.NewWriter(bodyBuf)
@@ -30,8 +27,7 @@ func NewFormData() *Form {
 	}
 }
 
-// SetBoundary 手动设置 multipart/form-data 边界值
-// 一般情况下不需要手动设置边界，除非对外兼容性有特殊要求
+// SetBoundary 设置 multipart 边界，应在添加字段或文件前调用。
 func (f *Form) SetBoundary(boundary string) *Form {
 	if !f.canWrite() {
 		return f
@@ -42,9 +38,7 @@ func (f *Form) SetBoundary(boundary string) *Form {
 	return f
 }
 
-// SetData 向表单中添加一个普通字段（name=value）
-// 参数 name 表示字段名，value 表示字段内容
-// 支持多次链式调用
+// SetData 添加普通字段，允许同名字段重复。
 func (f *Form) SetData(name, value string) *Form {
 	if !f.canWrite() {
 		return f
@@ -55,9 +49,7 @@ func (f *Form) SetData(name, value string) *Form {
 	return f
 }
 
-// SetFile 向表单中添加一个文件字段
-// 参数 name 为表单字段名，file 为本地文件路径
-// 支持多次链式调用
+// SetFile 添加本地文件，name 为字段名，file 为文件路径。
 func (f *Form) SetFile(name, file string) *Form {
 	if !f.canWrite() {
 		return f
@@ -103,14 +95,13 @@ func (f *Form) canWrite() bool {
 	return true
 }
 
-// GetContentType 返回该表单对应的 Content-Type，包含 boundary
+// GetContentType 返回包含 boundary 的 multipart/form-data 类型。
 func (f *Form) GetContentType() string {
 	return f.data.FormDataContentType()
 }
 
-// Encode 关闭 multipart.Writer 并返回完整的 multipart/form-data 编码内容
-// 返回的 io.Reader 可直接作为 HTTP 请求 body
-// 注意：调用 Encode() 后将无法再次向 Form 中添加字段
+// Encode 完成表单编码并返回正文 Reader，此后不能再添加字段或文件。
+// 编码失败时，返回的 Reader 会在读取时报告错误。
 func (f *Form) Encode() io.Reader {
 	if f.err == nil && !f.closed {
 		if err := f.data.Close(); err != nil {

@@ -14,10 +14,7 @@ import (
 	"time"
 )
 
-// HttpClient 封装了 http.Client 与 http.Transport
-// 是构建 Request 的基础客户端对象
-// 配置完成后可供多个 goroutine 并发发送独立请求；发送期间不要修改配置。
-// 创建后不应复制客户端。
+// HttpClient 提供 HTTP 客户端配置和连接管理。
 //
 // Deprecated: 请使用 Client。此名称在 v1.x 中保留，可能在未来主版本中移除。
 type HttpClient struct {
@@ -28,8 +25,8 @@ type HttpClient struct {
 	debugKeys map[string]struct{}
 }
 
-// Client 封装 http.Client 与 http.Transport，配置完成后可并发复用。
-// Client 与 HttpClient 是同一类型；创建后不应复制。
+// Client 提供 HTTP 客户端配置和连接管理，配置完成后可并发复用。
+// 创建后不应复制，发送请求期间不要修改配置。
 type Client = HttpClient
 
 // NewClient 创建并返回一个默认配置的客户端。
@@ -65,10 +62,9 @@ func NewHttpClient() *Client {
 	return NewClient()
 }
 
-// SetDebugOutput 设置调试日志输出位置；默认使用 os.Stdout，nil 等同于 io.Discard。
-// 不会关闭传入的 Writer，其生命周期由调用者管理。
-// 同一客户端的调试记录会串行写入；多个客户端共享输出时，Writer 应自行保证并发安全。
-// 写入错误不影响 HTTP 请求。应在发送请求前完成配置。
+// SetDebugOutput 设置日志 Writer，默认 os.Stdout；nil 表示丢弃日志。
+// Writer 由调用方关闭。同一客户端串行写入，多个客户端共用时需保证并发安全。
+// 应在发送前完成配置；日志写入错误不影响请求。
 func (c *HttpClient) SetDebugOutput(w io.Writer) *Client {
 	c.debugMu.Lock()
 	defer c.debugMu.Unlock()
@@ -102,17 +98,14 @@ func (c *HttpClient) CloseIdleConnections() {
 	c.client.CloseIdleConnections()
 }
 
-// CustomizeTransport 允许自定义底层 http.Transport 的所有字段
+// CustomizeTransport 在发送请求前配置底层 Transport。
 func (c *HttpClient) CustomizeTransport(f func(tr *http.Transport)) *Client {
 	f(c.transport)
 	return c
 }
 
-// SetProxy 设置客户端的代理服务器地址
-// 参数 proxyURL 为代理地址，如 "http://127.0.0.1:1080"
-// 设置后所有请求将通过代理发送
-// 非法代理地址会在发送请求时返回错误，不会退回直连。
-// 调用 SetProxy 设置合法地址或 ClearProxy 可恢复请求。
+// SetProxy 设置代理地址，支持 http、https、socks5 和 socks5h。
+// 地址无效时在 Send 中报错，不会退回直连；设置合法地址或调用 ClearProxy 可恢复。
 func (c *HttpClient) SetProxy(proxyURL string) *Client {
 	proxy, err := url.Parse(proxyURL)
 	if err == nil {
@@ -145,36 +138,31 @@ func (c *HttpClient) SetProxy(proxyURL string) *Client {
 	return c
 }
 
-// ClearProxy 清除当前代理配置，使请求不再通过代理服务器发送
+// ClearProxy 清除代理配置，恢复直连。
 func (c *HttpClient) ClearProxy() *Client {
 	c.transport.Proxy = nil
 	return c
 }
 
-// SetSkipVerify 设置是否跳过 TLS 证书验证
-// 参数 isSkipVerify 为 true 时不验证服务端证书
+// SetSkipVerify 设置是否跳过服务端 TLS 证书验证。
 func (c *HttpClient) SetSkipVerify(isSkipVerify bool) *Client {
 	c.transport.TLSClientConfig.InsecureSkipVerify = isSkipVerify
 	return c
 }
 
-// SetTimeout 设置客户端总请求超时时间
-// 参数 t 为超时值，例如 30 * time.Second
+// SetTimeout 设置客户端总请求超时，0 表示禁用该超时。
 func (c *HttpClient) SetTimeout(t time.Duration) *Client {
 	c.client.Timeout = t
 	return c
 }
 
-// SetCookieJar 为客户端设置 CookieJar，用于管理 Cookie
-// 接受标准库 net/http/cookiejar.Jar 或其他 http.CookieJar 实现。
-// CookieJar 会自动存储与发送 Cookie；传入 nil 可禁用 Cookie 管理。
+// SetCookieJar 设置自动管理 Cookie 的 Jar，nil 表示禁用。
 func (c *HttpClient) SetCookieJar(j http.CookieJar) *Client {
 	c.client.Jar = j
 	return c
 }
 
-// SetRedirect 设置客户端的重定向策略
-// 调用者需传入一个 CheckRedirect 回调函数，用于处理 3xx 重定向
+// SetRedirect 设置重定向回调，语义与 http.Client.CheckRedirect 一致。
 func (c *HttpClient) SetRedirect(f func(req *http.Request, via []*http.Request) error) *Client {
 	c.client.CheckRedirect = f
 	return c

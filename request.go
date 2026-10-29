@@ -17,8 +17,7 @@ import (
 	"github.com/Albert-Zhan/httpc/body"
 )
 
-// Request 封装了 HTTP 请求构建和发送的逻辑
-// 每次请求应创建独立实例，不支持多个 goroutine 并发构建、发送或读取同一 Request。
+// Request 构建、发送并读取一次 HTTP 请求，不支持并发共享。
 type Request struct {
 	httpc    *Client
 	request  *http.Request
@@ -32,11 +31,11 @@ type Request struct {
 	debug    bool
 	err      error
 
-	// legacyCookies preserves changes to the caller's slice variable until Send.
+	// 保留切片变量的引用，使发送前的重赋值和追加仍然生效。
 	legacyCookies *[]*http.Cookie
 }
 
-// NewRequest 创建一个新的 Request 对象，默认使用 GET 方法
+// NewRequest 创建默认使用 GET 方法的请求。
 func NewRequest(client *Client) *Request {
 	return &Request{
 		httpc:  client,
@@ -54,7 +53,7 @@ func (r *Request) SetClient(client *Client) *Request {
 	return r
 }
 
-// SetMethod 设置 HTTP 请求方法，自动转为大写
+// SetMethod 设置请求方法，名称不区分大小写。
 func (r *Request) SetMethod(name string) *Request {
 	r.method = strings.ToUpper(name)
 	return r
@@ -73,7 +72,7 @@ func (r *Request) SetUrl(rawURL string) *Request {
 	return r.SetURL(rawURL)
 }
 
-// SetParam 添加 URL 查询参数，支持多次链式调用
+// SetParam 追加查询参数，同名参数保留多个值。
 func (r *Request) SetParam(name, value string) *Request {
 	if r.param == nil {
 		r.param = make(url.Values)
@@ -94,16 +93,16 @@ func (r *Request) AddHeader(name, value string) *Request {
 	return r
 }
 
-// SetBasicAuth 设置 HTTP Basic Auth 认证
+// SetBasicAuth 设置 HTTP Basic Auth 认证头。
 func (r *Request) SetBasicAuth(username, password string) *Request {
 	auth := username + ":" + password
 	value := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
 	return r.SetHeader("Authorization", value)
 }
 
-// SetCookieList 设置请求的 Cookie 列表，替换此前的设置；nil 或空列表可清除列表。
-// 保存时复制切片，后续替换切片元素或追加 Cookie 不会改变此列表。
-// Cookie 对象本身仍被共享，发送期间不要修改。与 SetCookies 混用时最后一次设置生效。
+// SetCookieList 替换 Cookie 列表，复制切片但共享 Cookie 对象。
+// nil 或空列表可清除列表，与 SetCookies 混用时后一次设置生效。
+// 发送期间不要修改 Cookie 对象。
 func (r *Request) SetCookieList(cookies []*http.Cookie) *Request {
 	r.cookies = slices.Clone(cookies)
 	r.legacyCookies = nil
@@ -120,22 +119,21 @@ func (r *Request) SetCookies(cookies *[]*http.Cookie) *Request {
 	return r
 }
 
-// SetDebug 设置是否开启调试模式
-// 默认输出原始请求信息，按 Client.AddDebugSensitiveFields 配置脱敏。
-// 输出位置由 Client.SetDebugOutput 配置。
+// SetDebug 设置是否输出请求日志，默认关闭；开启后默认不脱敏。
+// 通过 Client.SetDebugOutput 和 Client.AddDebugSensitiveFields 配置输出和脱敏。
 func (r *Request) SetDebug(d bool) *Request {
 	r.debug = d
 	return r
 }
 
-// SetBody 设置请求体，实现 body.Body 接口
+// SetBody 设置请求正文。
 func (r *Request) SetBody(body body.Body) *Request {
 	r.data = body
 	return r
 }
 
-// Send 构建并发送 HTTP 请求
-// 可选传入 context，用于控制请求超时或取消
+// Send 构建并发送请求，可选传入 context 控制取消和超时。
+// 省略 context 时使用 context.Background()。
 func (r *Request) Send(ctxs ...context.Context) *Request {
 	if r.httpc == nil || r.httpc.client == nil {
 		r.err = wrapError(ErrInvalidRequest, "send request", fmt.Errorf("client is nil"))
@@ -207,7 +205,6 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 		r.request.AddCookie(v)
 	}
 
-	// log 方法实现在 debug.go 中，仅在 SetDebug(true) 时输出。
 	r.log()
 
 	r.response, r.err = r.httpc.client.Do(r.request)
@@ -225,17 +222,18 @@ func requestBodyError(data body.Body) error {
 	return nil
 }
 
-// GetResponse 返回 HTTP 响应对象
+// GetResponse 返回 HTTP 响应对象。
 func (r *Request) GetResponse() *http.Response {
 	return r.response
 }
 
-// GetError 返回请求过程中发生的错误
+// GetError 返回最近一次发送或读取错误。
 func (r *Request) GetError() error {
 	return r.err
 }
 
-// End 执行请求并返回响应对象、响应内容字符串以及错误
+// End 读取已发送请求的响应正文并关闭响应体，返回字符串。
+// 4xx 和 5xx 状态码不会自动视为错误。
 func (r *Request) End() (*http.Response, string, error) {
 	resp, bodyByte, err := r.EndByte()
 	if err != nil {
@@ -244,8 +242,8 @@ func (r *Request) End() (*http.Response, string, error) {
 	return resp, string(bodyByte), nil
 }
 
-// EndByte 执行请求并返回响应对象、响应内容字节数组以及错误
-// 自动处理 gzip 压缩
+// EndByte 读取已发送请求的响应正文并关闭响应体，返回字节并支持 gzip 解码。
+// 4xx 和 5xx 状态码不会自动视为错误。
 func (r *Request) EndByte() (*http.Response, []byte, error) {
 	if r.err != nil {
 		return nil, nil, r.err
@@ -295,8 +293,8 @@ func (r *Request) EndByte() (*http.Response, []byte, error) {
 	return r.response, bodyByte, nil
 }
 
-// EndFile 将响应体保存为文件
-// savePath 为目录路径，saveFileName 可为空，自动根据 URL 获取文件名
+// EndFile 将已发送请求的响应保存为文件并关闭响应体，仅接受 200 OK。
+// savePath 目录须已存在，已有文件会被覆盖；saveFileName 为空时从 URL 获取文件名。
 func (r *Request) EndFile(savePath, saveFileName string) (resp *http.Response, err error) {
 	if r.err != nil {
 		return nil, r.err
