@@ -3,19 +3,27 @@ package httpc
 import (
 	"crypto/tls"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 // HttpClient 封装了 http.Client 与 http.Transport
 // 是构建 Request 的基础客户端对象
+// 配置完成后可供多个 goroutine 并发发送独立请求；发送期间不要修改配置。
+// 创建后不应复制 HttpClient。
 type HttpClient struct {
 	client    *http.Client
 	transport *http.Transport
+	debugMu   sync.Mutex
+	debugOut  io.Writer
+	debugKeys map[string]struct{}
 }
 
 // NewHttpClient 创建并返回一个默认配置的 HttpClient 实例
@@ -41,7 +49,43 @@ func NewHttpClient() *HttpClient {
 		Transport: defaultTransport,
 		Timeout:   30 * time.Second,
 	}
-	return &HttpClient{client: client, transport: defaultTransport}
+	return &HttpClient{client: client, transport: defaultTransport, debugOut: os.Stdout}
+}
+
+// SetDebugOutput 设置调试日志输出位置；默认使用 os.Stdout，nil 等同于 io.Discard。
+// 不会关闭传入的 Writer，其生命周期由调用者管理。
+// 同一客户端的调试记录会串行写入；多个客户端共享输出时，Writer 应自行保证并发安全。
+// 写入错误不影响 HTTP 请求。应在发送请求前完成配置。
+func (this *HttpClient) SetDebugOutput(w io.Writer) *HttpClient {
+	this.debugMu.Lock()
+	defer this.debugMu.Unlock()
+	if w == nil {
+		w = io.Discard
+	}
+	this.debugOut = w
+	return this
+}
+
+// AddDebugSensitiveFields 添加调试日志需要脱敏的头或字段名。
+// 名称不区分大小写及分隔符，追加配置不会移除内置规则。应在发送请求前调用。
+func (this *HttpClient) AddDebugSensitiveFields(names ...string) *HttpClient {
+	this.debugMu.Lock()
+	defer this.debugMu.Unlock()
+	if this.debugKeys == nil {
+		this.debugKeys = make(map[string]struct{})
+	}
+	for _, name := range names {
+		if key := normalizeDebugKey(name); key != "" {
+			this.debugKeys[key] = struct{}{}
+		}
+	}
+	return this
+}
+
+// CloseIdleConnections 关闭当前空闲连接，不中断正在使用的连接，也不禁止后续请求。
+// 可在客户端被并发使用时调用。
+func (this *HttpClient) CloseIdleConnections() {
+	this.client.CloseIdleConnections()
 }
 
 // CustomizeTransport 允许自定义底层 http.Transport 的所有字段

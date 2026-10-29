@@ -12,6 +12,7 @@ import (
 
 // Form 用于构建 multipart/form-data 类型的表单请求体
 // 支持添加普通字段与文件字段，并最终编码为可用于 HTTP 请求的 io.Reader
+// Form 包含可变构建状态，不支持并发修改或在多个请求之间并发共享。
 type Form struct {
 	dataBuf *bytes.Buffer
 	data    *multipart.Writer

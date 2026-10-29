@@ -17,6 +17,7 @@ import (
 )
 
 // Request 封装了 HTTP 请求构建和发送的逻辑
+// 每次请求应创建独立实例，不支持多个 goroutine 并发构建、发送或读取同一 Request。
 type Request struct {
 	httpc    *HttpClient
 	request  *http.Request
@@ -94,7 +95,7 @@ func (this *Request) SetCookies(cookies *[]*http.Cookie) *Request {
 }
 
 // SetDebug 设置是否开启调试模式
-// 开启后会打印请求方法、URL、头信息、Cookie 和 Body
+// 开启后输出脱敏的请求信息；输出位置由 HttpClient.SetDebugOutput 配置。
 func (this *Request) SetDebug(d bool) *Request {
 	this.debug = d
 	return this
@@ -200,21 +201,6 @@ func (this *Request) GetResponse() *http.Response {
 // GetError 返回请求过程中发生的错误
 func (this *Request) GetError() error {
 	return this.err
-}
-
-// log 调试模式下打印请求详细信息
-func (this *Request) log() {
-	if this.debug == true {
-		data := ""
-		if this.data != nil {
-			data = this.data.GetData()
-		}
-		fmt.Printf("[httpc Debug]\n")
-		fmt.Printf("-------------------------------------------------------------------\n")
-		fmt.Printf("Request: %s %s\nHeader: %v\nCookies: %v\n", this.method, this.request.URL.String(), this.request.Header, this.request.Cookies())
-		fmt.Printf("Body: %s\n", data)
-		fmt.Printf("-------------------------------------------------------------------\n")
-	}
 }
 
 // End 执行请求并返回响应对象、响应内容字符串以及错误

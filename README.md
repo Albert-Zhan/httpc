@@ -55,7 +55,7 @@ func main() {
 }
 ```
 
-客户端可以复用，每次请求创建新的 `Request`。先调用 `Send()` 发送请求，再调用 `End()`、`EndByte()` 或 `EndFile()` 读取结果。
+客户端配置完成后可以被多个 goroutine 共享，每次请求创建独立的 `Request` 和请求体。`Request`、`body.Form` 等可变构建器不支持并发共享；发送期间不要修改客户端配置或正在使用的请求体。先调用 `Send()` 发送请求，再调用 `End()`、`EndByte()` 或 `EndFile()` 读取结果。
 
 以下示例均为 `main` 函数内的独立代码片段。请求示例默认已创建 `client := httpc.NewHttpClient()`；按需导入标准库包以及 `github.com/Albert-Zhan/httpc/body`，并替换示例中的接口地址。
 
@@ -131,7 +131,24 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-Basic Auth 应通过 HTTPS 传输。在 `Send()` 前调用 `SetDebug(true)` 可打印请求方法、URL、请求头、手动设置的 Cookie 和 Body；默认关闭，输出可能包含认证信息。
+Basic Auth 应通过 HTTPS 传输。在 `Send()` 前调用 `SetDebug(true)` 可输出已构建请求的脱敏信息。调试默认关闭，默认输出到 `os.Stdout`，可以为客户端指定其他 `io.Writer`：
+
+```go
+client := httpc.NewHttpClient().
+	SetDebugOutput(os.Stderr).
+	AddDebugSensitiveFields("account_key", "business_credential")
+_, _, err := httpc.NewRequest(client).
+	SetUrl("https://example.com/api").SetDebug(true).Send().End()
+if err != nil {
+	fmt.Println(err)
+}
+```
+
+- 内置规则遮蔽认证头、Cookie 值、URL 用户凭据及 fragment，并按常见敏感字段名处理查询参数、JSON 和表单，如 `password`、`token`、`api_key`、`secret`、`session_id`。字段名忽略大小写和分隔符，JSON 会递归处理对象及数组中的字段。
+- `AddDebugSensitiveFields` 追加业务敏感字段名，不会清除内置规则。默认规则无法识别所有业务数据，需要按实际字段补充。脱敏只作用于调试日志，不修改请求或返回的错误内容。
+- 日志只读取有限大小的可重放正文副本。正文超过 64 KiB、无法解析、不可重放或格式不受支持时会省略；multipart 不输出文件内容及文件名。不会直接调用请求体的 `GetData()`。
+
+同一客户端按完整记录串行写入日志；多个客户端共用一个 Writer 时，Writer 需自行保证并发安全。日志同步写入，写入失败不影响 HTTP 请求。可使用文件、`bytes.Buffer` 等作为输出，使用 `io.Discard` 或 `SetDebugOutput(nil)` 可关闭日志输出。Writer 由调用者管理，应等待全部请求结束后再关闭输出文件或读取共享缓冲区。
 
 ## Cookie 管理
 
@@ -256,6 +273,22 @@ client.CustomizeTransport(func(tr *http.Transport) {
 默认支持 HTTPS 的 HTTP/2 协商；连接建立超时为 30 秒，TLS 握手超时为 10 秒，空闲连接回收时间为 90 秒，`Expect: 100-continue` 等待时间为 1 秒。这些 Transport 配置均可通过 `CustomizeTransport` 调整。
 
 代理地址支持 `http`、`https`、`socks5` 和 `socks5h`，必须包含协议和主机，指定端口时需在 1–65535 范围内。非法地址会在 `Send()` 时产生请求错误，可通过 `End()` 或 `GetError()` 获取；设置合法代理或调用 `ClearProxy()` 可恢复请求。
+
+### 空闲连接管理
+
+客户端不再需要保留连接池时，可调用 `CloseIdleConnections()` 释放当前空闲连接。它不会中断正在进行的请求，也不会关闭客户端；之后仍可继续发送请求。该方法可以与请求并发调用。
+
+```go
+client := httpc.NewHttpClient()
+defer client.CloseIdleConnections()
+
+resp, text, err := httpc.NewRequest(client).SetUrl("https://example.com/api").Send().End()
+if err != nil {
+	fmt.Println(err)
+	return
+}
+fmt.Println(resp.StatusCode, text)
+```
 
 ### context 超时与取消
 
