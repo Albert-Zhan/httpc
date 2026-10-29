@@ -160,7 +160,7 @@ func (c *HttpClient) redactDebugJSON(value jsontext.Value) (jsontext.Value, erro
 	}
 }
 
-// debugBody reads only a replayable copy, never the live request body or Body.GetData.
+// debugBody reads only a replayable copy, never the live request body.
 func (c *HttpClient) debugBody(req *http.Request) string {
 	if req.Body == nil || req.Body == http.NoBody {
 		return ""

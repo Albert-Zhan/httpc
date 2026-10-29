@@ -41,11 +41,6 @@ func (this *Raw) SetData(data, format string) {
 	this.format = format
 }
 
-// GetData 返回当前的原始字符串内容
-func (this *Raw) GetData() string {
-	return this.data
-}
-
 // GetContentType 返回当前 Raw 数据的 Content-Type 字段
 func (this *Raw) GetContentType() string {
 	return this.format

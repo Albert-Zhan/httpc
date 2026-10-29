@@ -28,11 +28,6 @@ func (this *Url) SetData(name, value string) *Url {
 	return this
 }
 
-// GetData 返回当前表单的 URL-encoded 文本形式
-func (this *Url) GetData() string {
-	return this.data.Encode()
-}
-
 // GetContentType 返回该类型的 Content-Type
 func (this *Url) GetContentType() string {
 	return "application/x-www-form-urlencoded"

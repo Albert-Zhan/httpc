@@ -131,20 +131,19 @@ func TestAutomaticGzipDecodeError(t *testing.T) {
 	}
 }
 
-type legacyBody struct{}
+type customBody struct{}
 
-func (legacyBody) GetData() string        { return "custom content" }
-func (legacyBody) GetContentType() string { return "text/plain" }
-func (legacyBody) Encode() io.Reader      { return strings.NewReader("custom content") }
+func (customBody) GetContentType() string { return "text/plain" }
+func (customBody) Encode() io.Reader      { return strings.NewReader("custom content") }
 
 type lateErrorBody struct {
-	legacyBody
+	customBody
 	err error
 }
 
 func (b *lateErrorBody) Encode() io.Reader {
 	b.err = io.ErrUnexpectedEOF
-	return b.legacyBody.Encode()
+	return b.customBody.Encode()
 }
 func (b *lateErrorBody) Err() error { return b.err }
 
@@ -159,9 +158,9 @@ func TestCustomBodyErrorCheckingIsOptional(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
 	})
-	_, _, err := NewRequest(client).SetUrl("http://example.test/").SetBody(legacyBody{}).Send().End()
+	_, _, err := NewRequest(client).SetUrl("http://example.test/").SetBody(customBody{}).Send().End()
 	if err != nil || called != 1 {
-		t.Fatalf("legacy body failed: %v, calls = %d", err, called)
+		t.Fatalf("custom body failed: %v, calls = %d", err, called)
 	}
 	_, _, err = NewRequest(client).SetUrl("http://example.test/").SetBody(&lateErrorBody{}).Send().End()
 	assertError(t, err, ErrRequestBody, io.ErrUnexpectedEOF)

@@ -7,7 +7,6 @@ import (
 	"mime/multipart"
 	"os"
 	"path/filepath"
-	"strings"
 )
 
 // Form 用于构建 multipart/form-data 类型的表单请求体
@@ -102,42 +101,6 @@ func (this *Form) canWrite() bool {
 		return false
 	}
 	return true
-}
-
-// GetData 返回当前 Form 的 multipart 数据文本形式
-func (this *Form) GetData() string {
-	b := this.dataBuf.Bytes()
-	br := bytes.NewReader(b)
-	r := multipart.NewReader(br, this.data.Boundary())
-	form, err := r.ReadForm(32 << 20)
-	if err == nil {
-		defer form.RemoveAll()
-		var sb strings.Builder
-		boundary := this.data.Boundary()
-		header := fmt.Sprintf("--%s\r\n", boundary)
-		footer := fmt.Sprintf("--%s--", boundary)
-
-		for k, v := range form.Value {
-			sb.WriteString(header)
-			sb.WriteString(fmt.Sprintf(`Content-Disposition: form-data; name="%s"`, k))
-			sb.WriteString("\r\n")
-			sb.WriteString(v[0])
-			sb.WriteString("\r\n")
-		}
-
-		for fk, fv := range form.File {
-			for _, fh := range fv {
-				sb.WriteString(header)
-				sb.WriteString(fmt.Sprintf(
-					`Content-Disposition: form-data; name="%s"; filename="%s"`, fk, fh.Filename))
-				sb.WriteString("\r\n")
-				sb.WriteString(fmt.Sprintf("Content-Type: %s\r\n", fh.Header.Get("Content-Type")))
-			}
-		}
-		sb.WriteString(footer)
-		return sb.String()
-	}
-	return ""
 }
 
 // GetContentType 返回该表单对应的 Content-Type，包含 boundary

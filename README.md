@@ -86,6 +86,12 @@ fmt.Println(resp.StatusCode, text)
 
 请求头名称不区分大小写。`SetHeader` 覆盖同名头的全部旧值，后一次设置生效；`AddHeader` 保留旧值并追加新值，上例的 `X-Tag` 会保留 `go` 和 `httpc` 两个值。`SetBasicAuth` 与手动设置 `Authorization` 也遵循后一次覆盖的规则。手动设置的 `Content-Type` 优先于请求体自动提供的类型。
 
+### 自定义请求体
+
+`SetBody` 接受 `body.Body`，自定义实现只需提供 `GetContentType() string` 和 `Encode() io.Reader`。还可以提供可选的 `Err() error`，发送时会在编码前后检查错误。
+
+需要完整编码后的正文时，可读取 `Encode()` 返回的 Reader。对于 `Form`，`Encode()` 会结束表单构建，此后不能继续添加字段或文件。
+
 ### URL 编码表单
 
 ```go
@@ -147,7 +153,7 @@ if err != nil {
 - 没有内置脱敏字段，仅匹配 `AddDebugSensitiveFields` 指定的 key；忽略大小写和连字符、下划线等分隔符，但不做后缀匹配。例如 `token` 不会自动匹配 `access_token`，后者需单独指定。可多次调用以追加配置。
 - 同一规则用于请求头、查询参数、JSON 和表单字段；JSON 会递归处理对象及数组中的字段。指定 `Cookie` 会隐藏全部 Cookie 值，指定某个 Cookie 名称则仅隐藏该 Cookie，并同步处理请求头和日志中的 Cookies 行。
 - URL 用户名、密码、完整用户凭据及 fragment 分别通过 `username`、`password`、`userinfo`、`fragment` 指定。可解析的未指定字段保持原值；配置脱敏后无法解析的查询部分会省略。脱敏只作用于调试日志，不修改请求或返回的错误内容。
-- 日志只读取有限大小的可重放正文副本，不会调用 `GetData()`。超过 64 KiB、不可重放的正文和二进制内容会省略；multipart 展示字段及文件名，不输出文件内容。配置脱敏后，无法解析或不支持按字段处理的正文会省略。指定 `filename` 可遮蔽文件名，指定文件字段名可隐藏该字段的日志值。
+- 日志只读取有限大小的可重放正文副本。超过 64 KiB、不可重放的正文和二进制内容会省略；multipart 展示字段及文件名，不输出文件内容。配置脱敏后，无法解析或不支持按字段处理的正文会省略。指定 `filename` 可遮蔽文件名，指定文件字段名可隐藏该字段的日志值。
 
 调用链为 `Request.Send()` → `Request.log()` → 配置的 Writer。`Send()` 在 `request.go` 中调用 `this.log()`；`log()` 的实现位于 `debug.go`，两者同属 `httpc` 包。日志 JSON 输出和字段处理使用 Go 1.27 的 `encoding/json/v2`，并通过 `jsontext.Value` 保留大整数精度。
 

@@ -98,7 +98,6 @@ type debugBodyProbe struct {
 	reader io.Reader
 }
 
-func (b debugBodyProbe) GetData() string        { panic("debug logging must not call GetData") }
 func (b debugBodyProbe) GetContentType() string { return "application/json" }
 func (b debugBodyProbe) Encode() io.Reader      { return b.reader }
 
