@@ -248,6 +248,8 @@ client.CustomizeTransport(func(tr *http.Transport) {
 
 默认总请求超时为 30 秒，响应头超时为 15 秒，最低 TLS 版本为 TLS 1.2。`SetTimeout(0)` 取消客户端总超时，Transport 的响应头超时等配置仍然生效。
 
+代理地址支持 `http`、`https`、`socks5` 和 `socks5h`，必须包含协议和主机，指定端口时需在 1–65535 范围内。非法地址会在 `Send()` 时产生请求错误，可通过 `End()` 或 `GetError()` 获取；设置合法代理或调用 `ClearProxy()` 可恢复请求。
+
 ### context 超时与取消
 
 ```go

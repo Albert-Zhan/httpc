@@ -2,8 +2,11 @@ package httpc
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -41,8 +44,36 @@ func (this *HttpClient) CustomizeTransport(f func(tr *http.Transport)) *HttpClie
 // SetProxy 设置客户端的代理服务器地址
 // 参数 proxyUrl 为代理地址，如 "http://127.0.0.1:1080"
 // 设置后所有请求将通过代理发送
+// 非法代理地址会在发送请求时返回错误，不会退回直连。
+// 调用 SetProxy 设置合法地址或 ClearProxy 可恢复请求。
 func (this *HttpClient) SetProxy(proxyUrl string) *HttpClient {
-	proxy, _ := url.Parse(proxyUrl)
+	proxy, err := url.Parse(proxyUrl)
+	if err == nil {
+		switch proxy.Scheme {
+		case "http", "https", "socks5", "socks5h":
+		default:
+			err = fmt.Errorf("unsupported proxy scheme %q", proxy.Scheme)
+		}
+		if err == nil && proxy.Hostname() == "" {
+			err = fmt.Errorf("proxy hostname is required")
+		}
+		if err == nil && strings.HasSuffix(proxy.Host, ":") {
+			err = fmt.Errorf("proxy port must not be empty")
+		}
+		if err == nil && proxy.Port() != "" {
+			port, parseErr := strconv.Atoi(proxy.Port())
+			if parseErr != nil || port < 1 || port > 65535 {
+				err = fmt.Errorf("proxy port must be between 1 and 65535")
+			}
+		}
+	}
+	if err != nil {
+		proxyErr := fmt.Errorf("httpc: invalid proxy URL: %w", err)
+		this.transport.Proxy = func(*http.Request) (*url.URL, error) {
+			return nil, proxyErr
+		}
+		return this
+	}
 	this.transport.Proxy = http.ProxyURL(proxy)
 	return this
 }

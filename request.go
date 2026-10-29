@@ -104,9 +104,25 @@ func (this *Request) SetBody(body body.Body) *Request {
 // Send 构建并发送 HTTP 请求
 // 可选传入 context，用于控制请求超时或取消
 func (this *Request) Send(ctxs ...context.Context) *Request {
-	param := this.param.Encode()
-	if param != "" {
-		this.url += "?" + param
+	requestURL := this.url
+	if len(*this.param) > 0 {
+		u, err := url.Parse(requestURL)
+		if err != nil {
+			this.err = err
+			return this
+		}
+		query, err := url.ParseQuery(u.RawQuery)
+		if err != nil {
+			this.err = fmt.Errorf("httpc: invalid URL query: %w", err)
+			return this
+		}
+		for key, values := range *this.param {
+			for _, value := range values {
+				query.Add(key, value)
+			}
+		}
+		u.RawQuery = query.Encode()
+		requestURL = u.String()
 	}
 
 	var data io.Reader
@@ -122,7 +138,7 @@ func (this *Request) Send(ctxs ...context.Context) *Request {
 		ctx = ctxs[0]
 	}
 
-	this.request, this.err = http.NewRequestWithContext(ctx, this.method, this.url, data)
+	this.request, this.err = http.NewRequestWithContext(ctx, this.method, requestURL, data)
 	if this.err != nil {
 		return this
 	}
@@ -165,7 +181,7 @@ func (this *Request) log() {
 		}
 		fmt.Printf("[httpc Debug]\n")
 		fmt.Printf("-------------------------------------------------------------------\n")
-		fmt.Printf("Request: %s %s\nHeader: %v\nCookies: %v\n", this.method, this.url, this.request.Header, this.request.Cookies())
+		fmt.Printf("Request: %s %s\nHeader: %v\nCookies: %v\n", this.method, this.request.URL.String(), this.request.Header, this.request.Cookies())
 		fmt.Printf("Body: %s\n", data)
 		fmt.Printf("-------------------------------------------------------------------\n")
 	}
@@ -227,13 +243,13 @@ func (this *Request) EndFile(savePath, saveFileName string) (*http.Response, err
 		return nil, this.err
 	}
 
-	if this.response.StatusCode != http.StatusOK {
-		return this.response, errors.New("failed to write: server responded with non-200 status")
-	}
-
 	defer func() {
 		_ = this.response.Body.Close()
 	}()
+
+	if this.response.StatusCode != http.StatusOK {
+		return this.response, errors.New("failed to write: server responded with non-200 status")
+	}
 
 	if saveFileName == "" {
 		u, err := url.Parse(this.request.URL.String())
