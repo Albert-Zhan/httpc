@@ -2,7 +2,8 @@ package httpc
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"mime"
@@ -11,18 +12,13 @@ import (
 	"net/url"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 const (
 	debugRedacted = "[REDACTED]"
 	maxDebugBody  = 64 << 10
 )
-
-var defaultDebugKeys = []string{
-	"authorization", "auth", "cookie", "password", "passwordconfirmation", "passwd", "pwd",
-	"passphrase", "secret", "token", "apikey", "session", "sessionid", "sid",
-	"csrftoken", "signature", "privatekey", "otp", "code", "credentials",
-}
 
 func normalizeDebugKey(name string) string {
 	return strings.Map(func(r rune) rune {
@@ -34,50 +30,78 @@ func normalizeDebugKey(name string) string {
 }
 
 func (c *HttpClient) sensitiveDebugKey(name string) bool {
-	key := normalizeDebugKey(name)
-	if _, ok := c.debugKeys[key]; ok {
-		return true
-	}
-	for _, sensitive := range defaultDebugKeys {
-		if strings.HasSuffix(key, sensitive) {
-			return true
-		}
-	}
-	return false
+	_, ok := c.debugKeys[normalizeDebugKey(name)]
+	return ok
 }
 
 func (c *HttpClient) debugURL(u *url.URL) string {
 	copyURL := *u
+	if len(c.debugKeys) == 0 {
+		return copyURL.String()
+	}
 	if copyURL.User != nil {
-		copyURL.User = url.User(debugRedacted)
+		username := copyURL.User.Username()
+		password, hasPassword := copyURL.User.Password()
+		if c.sensitiveDebugKey("userinfo") {
+			copyURL.User = url.User(debugRedacted)
+		} else {
+			if c.sensitiveDebugKey("username") {
+				username = debugRedacted
+			}
+			if c.sensitiveDebugKey("password") && hasPassword {
+				password = debugRedacted
+			}
+			if hasPassword {
+				copyURL.User = url.UserPassword(username, password)
+			} else {
+				copyURL.User = url.User(username)
+			}
+		}
 	}
 	query, err := url.ParseQuery(copyURL.RawQuery)
 	if err != nil {
 		copyURL.RawQuery = "[query omitted]"
 	} else {
-		c.redactDebugValues(query)
-		copyURL.RawQuery = query.Encode()
+		if c.redactDebugValues(query) {
+			copyURL.RawQuery = query.Encode()
+		}
 	}
-	if copyURL.Fragment != "" || copyURL.RawFragment != "" {
+	if c.sensitiveDebugKey("fragment") && (copyURL.Fragment != "" || copyURL.RawFragment != "") {
 		copyURL.Fragment = debugRedacted
 		copyURL.RawFragment = ""
 	}
 	return copyURL.String()
 }
 
-func (c *HttpClient) redactDebugValues(values url.Values) {
+func (c *HttpClient) redactDebugValues(values url.Values) bool {
+	changed := false
 	for key := range values {
 		if c.sensitiveDebugKey(key) {
 			values[key] = []string{debugRedacted}
+			changed = true
 		}
 	}
+	return changed
 }
 
 func (c *HttpClient) debugHeaders(headers http.Header) http.Header {
 	copyHeaders := headers.Clone()
+	if len(c.debugKeys) == 0 {
+		return copyHeaders
+	}
 	for name, values := range copyHeaders {
 		if c.sensitiveDebugKey(name) {
 			copyHeaders[name] = []string{debugRedacted}
+		} else if strings.EqualFold(name, "Cookie") {
+			for i, value := range values {
+				parts := strings.Split(value, ";")
+				for j, part := range parts {
+					if key, _, found := strings.Cut(part, "="); found && c.sensitiveDebugKey(strings.TrimSpace(key)) {
+						parts[j] = key + "=" + debugRedacted
+					}
+				}
+				values[i] = strings.Join(parts, ";")
+			}
 		} else if strings.EqualFold(name, "Referer") {
 			for i, value := range values {
 				if u, err := url.Parse(value); err == nil && u.IsAbs() && u.Host != "" {
@@ -92,27 +116,47 @@ func (c *HttpClient) debugHeaders(headers http.Header) http.Header {
 }
 
 func debugJSON(value any) string {
-	encoded, err := json.Marshal(value)
+	encoded, err := json.Marshal(value, json.Deterministic(true))
 	if err != nil {
 		return "[omitted: cannot safely encode]"
 	}
 	return string(encoded)
 }
 
-func (c *HttpClient) redactDebugJSON(value any) {
-	switch value := value.(type) {
-	case map[string]any:
-		for key, item := range value {
+func (c *HttpClient) redactDebugJSON(value jsontext.Value) (jsontext.Value, error) {
+	switch value.Kind() {
+	case '{':
+		var fields map[string]jsontext.Value
+		if err := json.Unmarshal(value, &fields); err != nil {
+			return nil, err
+		}
+		for key, item := range fields {
 			if c.sensitiveDebugKey(key) {
-				value[key] = debugRedacted
+				fields[key] = jsontext.Value(`"[REDACTED]"`)
 			} else {
-				c.redactDebugJSON(item)
+				redacted, err := c.redactDebugJSON(item)
+				if err != nil {
+					return nil, err
+				}
+				fields[key] = redacted
 			}
 		}
-	case []any:
-		for _, item := range value {
-			c.redactDebugJSON(item)
+		return json.Marshal(fields, json.Deterministic(true))
+	case '[':
+		var items []jsontext.Value
+		if err := json.Unmarshal(value, &items); err != nil {
+			return nil, err
 		}
+		for i, item := range items {
+			redacted, err := c.redactDebugJSON(item)
+			if err != nil {
+				return nil, err
+			}
+			items[i] = redacted
+		}
+		return json.Marshal(items, json.Deterministic(true))
+	default:
+		return value, nil
 	}
 }
 
@@ -124,16 +168,6 @@ func (c *HttpClient) debugBody(req *http.Request) string {
 	if req.GetBody == nil {
 		return "[omitted: body is not replayable]"
 	}
-	mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
-	if err != nil {
-		return "[omitted: unknown content type]"
-	}
-	switch {
-	case mediaType == "application/json", strings.HasSuffix(mediaType, "+json"),
-		mediaType == "application/x-www-form-urlencoded", mediaType == "multipart/form-data":
-	default:
-		return "[omitted: unsupported content type]"
-	}
 	reader, err := req.GetBody()
 	if err != nil || reader == nil {
 		return "[omitted: cannot copy body]"
@@ -142,6 +176,16 @@ func (c *HttpClient) debugBody(req *http.Request) string {
 	data, err := io.ReadAll(io.LimitReader(reader, maxDebugBody+1))
 	if err != nil || len(data) > maxDebugBody {
 		return "[omitted: unreadable body or size exceeds 64 KiB]"
+	}
+	mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	if len(c.debugKeys) == 0 && mediaType != "multipart/form-data" {
+		if !utf8.Valid(data) {
+			return "[omitted: binary body]"
+		}
+		return string(data)
+	}
+	if err != nil {
+		return "[omitted: unknown content type]"
 	}
 	switch mediaType {
 	case "application/x-www-form-urlencoded":
@@ -168,7 +212,11 @@ func (c *HttpClient) debugBody(req *http.Request) string {
 				return "[omitted: invalid multipart disposition]"
 			}
 			_, isFile := attributes["filename"]
-			value := "[file omitted]"
+			filename := part.FileName()
+			if c.sensitiveDebugKey("filename") {
+				filename = debugRedacted
+			}
+			value := fmt.Sprintf("[file: %s; content omitted]", filename)
 			if !isFile {
 				field, err := io.ReadAll(part)
 				if err != nil {
@@ -183,22 +231,18 @@ func (c *HttpClient) debugBody(req *http.Request) string {
 		}
 		return debugJSON(values)
 	default:
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
-		var value any
-		if err := decoder.Decode(&value); err != nil {
+		if mediaType != "application/json" && !strings.HasSuffix(mediaType, "+json") {
+			return "[omitted: unsupported content type for field redaction]"
+		}
+		value := jsontext.Value(data)
+		if !value.IsValid() {
 			return "[omitted: invalid JSON]"
 		}
-		if err := decoder.Decode(new(any)); err != io.EOF {
+		redacted, err := c.redactDebugJSON(value)
+		if err != nil {
 			return "[omitted: invalid JSON]"
 		}
-		switch value.(type) {
-		case map[string]any, []any:
-		default:
-			return "[omitted: scalar JSON]"
-		}
-		c.redactDebugJSON(value)
-		return debugJSON(value)
+		return string(redacted)
 	}
 }
 
@@ -214,7 +258,10 @@ func (r *Request) log() {
 	}
 	cookies := make(map[string]string)
 	for _, cookie := range r.request.Cookies() {
-		cookies[cookie.Name] = debugRedacted
+		cookies[cookie.Name] = cookie.Value
+		if c.sensitiveDebugKey("Cookie") || c.sensitiveDebugKey(cookie.Name) {
+			cookies[cookie.Name] = debugRedacted
+		}
 	}
 	var record strings.Builder
 	fmt.Fprintln(&record, "[httpc Debug]")

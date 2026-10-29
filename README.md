@@ -131,12 +131,12 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-Basic Auth 应通过 HTTPS 传输。在 `Send()` 前调用 `SetDebug(true)` 可输出已构建请求的脱敏信息。调试默认关闭，默认输出到 `os.Stdout`，可以为客户端指定其他 `io.Writer`：
+Basic Auth 应通过 HTTPS 传输。在 `Send()` 前调用 `SetDebug(true)` 可输出已构建请求的信息。调试默认关闭；开启后默认不脱敏，认证头、Cookie、URL 凭据及普通正文均会显示原值。默认输出到 `os.Stdout`，可指定其他 `io.Writer`，并通过 `AddDebugSensitiveFields` 选择需要脱敏的 key：
 
 ```go
 client := httpc.NewHttpClient().
 	SetDebugOutput(os.Stderr).
-	AddDebugSensitiveFields("account_key", "business_credential")
+	AddDebugSensitiveFields("Authorization", "Cookie", "password", "token")
 _, _, err := httpc.NewRequest(client).
 	SetUrl("https://example.com/api").SetDebug(true).Send().End()
 if err != nil {
@@ -144,9 +144,26 @@ if err != nil {
 }
 ```
 
-- 内置规则遮蔽认证头、Cookie 值、URL 用户凭据及 fragment，并按常见敏感字段名处理查询参数、JSON 和表单，如 `password`、`token`、`api_key`、`secret`、`session_id`。字段名忽略大小写和分隔符，JSON 会递归处理对象及数组中的字段。
-- `AddDebugSensitiveFields` 追加业务敏感字段名，不会清除内置规则。默认规则无法识别所有业务数据，需要按实际字段补充。脱敏只作用于调试日志，不修改请求或返回的错误内容。
-- 日志只读取有限大小的可重放正文副本。正文超过 64 KiB、无法解析、不可重放或格式不受支持时会省略；multipart 不输出文件内容及文件名。不会直接调用请求体的 `GetData()`。
+- 没有内置脱敏字段，仅匹配 `AddDebugSensitiveFields` 指定的 key；忽略大小写和连字符、下划线等分隔符，但不做后缀匹配。例如 `token` 不会自动匹配 `access_token`，后者需单独指定。可多次调用以追加配置。
+- 同一规则用于请求头、查询参数、JSON 和表单字段；JSON 会递归处理对象及数组中的字段。指定 `Cookie` 会隐藏全部 Cookie 值，指定某个 Cookie 名称则仅隐藏该 Cookie，并同步处理请求头和日志中的 Cookies 行。
+- URL 用户名、密码、完整用户凭据及 fragment 分别通过 `username`、`password`、`userinfo`、`fragment` 指定。可解析的未指定字段保持原值；配置脱敏后无法解析的查询部分会省略。脱敏只作用于调试日志，不修改请求或返回的错误内容。
+- 日志只读取有限大小的可重放正文副本，不会调用 `GetData()`。超过 64 KiB、不可重放的正文和二进制内容会省略；multipart 展示字段及文件名，不输出文件内容。配置脱敏后，无法解析或不支持按字段处理的正文会省略。指定 `filename` 可遮蔽文件名，指定文件字段名可隐藏该字段的日志值。
+
+调用链为 `Request.Send()` → `Request.log()` → 配置的 Writer。`Send()` 在 `request.go` 中调用 `this.log()`；`log()` 的实现位于 `debug.go`，两者同属 `httpc` 包。日志 JSON 输出和字段处理使用 Go 1.27 的 `encoding/json/v2`，并通过 `jsontext.Value` 保留大整数精度。
+
+例如，一次 POST 请求的默认日志如下（使用演示值）：
+
+```text
+[httpc Debug]
+-------------------------------------------------------------------
+Request: POST https://example.com/login?token=demo-token
+Header: {"Authorization":["Bearer demo-auth"],"Content-Type":["application/json"],"Cookie":["session=demo-session"]}
+Cookies: {"session":"demo-session"}
+Body: {"username":"alice","password":"demo-pass"}
+-------------------------------------------------------------------
+```
+
+配置上述四个 key 后，匹配的值变为 `[REDACTED]`；查询参数中的标记按 URL 编码显示为 `%5BREDACTED%5D`。
 
 同一客户端按完整记录串行写入日志；多个客户端共用一个 Writer 时，Writer 需自行保证并发安全。日志同步写入，写入失败不影响 HTTP 请求。可使用文件、`bytes.Buffer` 等作为输出，使用 `io.Discard` 或 `SetDebugOutput(nil)` 可关闭日志输出。Writer 由调用者管理，应等待全部请求结束后再关闭输出文件或读取共享缓冲区。
 

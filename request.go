@@ -95,7 +95,8 @@ func (this *Request) SetCookies(cookies *[]*http.Cookie) *Request {
 }
 
 // SetDebug 设置是否开启调试模式
-// 开启后输出脱敏的请求信息；输出位置由 HttpClient.SetDebugOutput 配置。
+// 默认输出原始请求信息，按 HttpClient.AddDebugSensitiveFields 配置脱敏。
+// 输出位置由 HttpClient.SetDebugOutput 配置。
 func (this *Request) SetDebug(d bool) *Request {
 	this.debug = d
 	return this
@@ -176,6 +177,7 @@ func (this *Request) Send(ctxs ...context.Context) *Request {
 		this.request.AddCookie(v)
 	}
 
+	// log 方法实现在 debug.go 中，仅在 SetDebug(true) 时输出。
 	this.log()
 
 	this.response, this.err = this.httpc.client.Do(this.request)

@@ -67,7 +67,8 @@ func (this *HttpClient) SetDebugOutput(w io.Writer) *HttpClient {
 }
 
 // AddDebugSensitiveFields 添加调试日志需要脱敏的头或字段名。
-// 名称不区分大小写及分隔符，追加配置不会移除内置规则。应在发送请求前调用。
+// 默认不脱敏；仅匹配已配置的名称，忽略大小写和分隔符。应在发送请求前调用。
+// username、password、userinfo、fragment 可用于 URL 的对应部分。
 func (this *HttpClient) AddDebugSensitiveFields(names ...string) *HttpClient {
 	this.debugMu.Lock()
 	defer this.debugMu.Unlock()

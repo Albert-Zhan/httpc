@@ -50,7 +50,10 @@ func TestDebugRedactsWithoutChangingRequests(t *testing.T) {
 			}))
 			defer server.Close()
 			var logs bytes.Buffer
-			client := NewHttpClient().SetDebugOutput(&logs).AddDebugSensitiveFields("Business-Credential")
+			client := NewHttpClient().SetDebugOutput(&logs).AddDebugSensitiveFields(
+				"Business-Credential", "username", "password", "fragment", "access_token", "token",
+				"Authorization", "Proxy-Authorization", "X-API-Key", "Cookie", "api_key",
+			)
 			defer client.CloseIdleConnections()
 			u, _ := url.Parse(server.URL)
 			u.User = url.UserPassword("private-user", "private-password")
@@ -106,7 +109,7 @@ func TestDebugOmitsUnsafeBodies(t *testing.T) {
 	}{
 		{"invalid JSON", rawDebugBody(`{"password":"body-secret"`, body.Json)},
 		{"trailing JSON", rawDebugBody(`{"password":"body-secret"} "trailing-secret"`, body.Json)},
-		{"scalar JSON", rawDebugBody(`"body-secret"`, body.Json)},
+		{"duplicate JSON keys", rawDebugBody(`{"password":"body-secret","password":"second-secret"}`, body.Json)},
 		{"plain text", rawDebugBody("body-secret", body.Text)},
 		{"large body", rawDebugBody(`{"password":"body-secret","data":"`+strings.Repeat("x", maxDebugBody)+`"}`, body.Json)},
 		{"streaming body", debugBodyProbe{io.NopCloser(strings.NewReader(`{"password":"body-secret"}`))}},
@@ -118,7 +121,7 @@ func TestDebugOmitsUnsafeBodies(t *testing.T) {
 			}))
 			defer server.Close()
 			var logs bytes.Buffer
-			client := NewHttpClient().SetDebugOutput(&logs)
+			client := NewHttpClient().SetDebugOutput(&logs).AddDebugSensitiveFields("password")
 			defer client.CloseIdleConnections()
 			_, text, err := NewRequest(client).SetUrl(server.URL).SetMethod("post").SetBody(tc.body).SetDebug(true).Send().End()
 			if err != nil || !strings.Contains(text, "body-secret") {
@@ -173,7 +176,7 @@ func TestConcurrentRequestsShareDebugOutput(t *testing.T) {
 	}))
 	defer server.Close()
 	var logs bytes.Buffer // The shared client must serialize access to this non-thread-safe writer.
-	client := NewHttpClient().SetDebugOutput(&logs)
+	client := NewHttpClient().SetDebugOutput(&logs).AddDebugSensitiveFields("X-Token")
 	defer client.CloseIdleConnections()
 	const count = 20
 	var workers sync.WaitGroup
@@ -195,5 +198,106 @@ func TestConcurrentRequestsShareDebugOutput(t *testing.T) {
 	}
 	if strings.Count(logs.String(), "[httpc Debug]") != count || strings.Contains(logs.String(), "concurrent-secret") {
 		t.Fatal("concurrent debug records were lost or not redacted")
+	}
+}
+
+func TestDebugDefaultDoesNotRedact(t *testing.T) {
+	for _, tc := range []struct {
+		name, contentType, content string
+	}{
+		{"JSON", body.Json, `{"password":"body-value","token":"body-token"}`},
+		{"form", "application/x-www-form-urlencoded", "password=body-value&token=body-token"},
+		{"plain text", body.Text, "password=body-value; token=body-token"},
+		{"invalid JSON", body.Json, `{"password":"body-value","token":"body-token"`},
+		{"scalar JSON", body.Json, `"body-value body-token"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			client := NewHttpClient().SetDebugOutput(&logs)
+			client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
+			})
+			cookies := []*http.Cookie{{Name: "session", Value: "cookie-value"}}
+			_, _, err := NewRequest(client).SetUrl("https://url-user:url-password@example.test/?token=query-value#fragment-value").
+				SetHeader("Authorization", "Bearer auth-value").SetCookies(&cookies).
+				SetBody(rawDebugBody(tc.content, tc.contentType)).SetDebug(true).Send().End()
+			if err != nil {
+				t.Fatal(err)
+			}
+			text := logs.String()
+			for _, value := range []string{"url-user", "url-password", "query-value", "fragment-value", "auth-value", "cookie-value", "body-value", "body-token"} {
+				if !strings.Contains(text, value) {
+					t.Errorf("default logging unexpectedly hid %q", value)
+				}
+			}
+			if strings.Contains(text, debugRedacted) {
+				t.Fatal("default logging applied redaction without configured fields")
+			}
+		})
+	}
+}
+
+func TestDebugOnlyRedactsConfiguredKeys(t *testing.T) {
+	var logs bytes.Buffer
+	client := NewHttpClient().SetDebugOutput(&logs).AddDebugSensitiveFields("To-Ken", "chosen_cookie")
+	client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
+	})
+	cookies := []*http.Cookie{{Name: "chosen_cookie", Value: "selected-cookie"}, {Name: "other", Value: "visible-cookie"}}
+	data := rawDebugBody(`{"TOKEN":"selected-json","password":"visible-password","access_token":"visible-access-token","number":123456789012345678901234567890}`, body.Json)
+	_, _, err := NewRequest(client).SetUrl("https://visible-user:visible-pass@example.test/?token=selected-query&access_token=visible-query#visible-fragment").
+		SetBody(data).SetHeader("Authorization", "Bearer visible-auth").SetCookies(&cookies).SetDebug(true).Send().End()
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := logs.String()
+	for _, value := range []string{"selected-json", "selected-query", "selected-cookie"} {
+		if strings.Contains(text, value) {
+			t.Errorf("configured field retained %q", value)
+		}
+	}
+	for _, value := range []string{"visible-user", "visible-pass", "visible-query", "visible-fragment", "visible-cookie", "visible-auth", "visible-password", "visible-access-token", "123456789012345678901234567890"} {
+		if !strings.Contains(text, value) {
+			t.Errorf("unconfigured field or precise number was changed: %q", value)
+		}
+	}
+}
+
+func TestDebugLogFormat(t *testing.T) {
+	for _, redact := range []bool{false, true} {
+		t.Run(fmt.Sprintf("redact=%v", redact), func(t *testing.T) {
+			var logs bytes.Buffer
+			client := NewHttpClient().SetDebugOutput(&logs)
+			if redact {
+				client.AddDebugSensitiveFields("Authorization", "Cookie", "password", "token")
+			}
+			client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
+			})
+			cookies := []*http.Cookie{{Name: "session", Value: "demo-session"}}
+			_, _, err := NewRequest(client).SetUrl("https://example.com/login?token=demo-token").SetMethod("post").
+				SetHeader("Authorization", "Bearer demo-auth").SetCookies(&cookies).
+				SetBody(rawDebugBody(`{"username":"alice","password":"demo-pass"}`, body.Json)).SetDebug(true).Send().End()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "[httpc Debug]\n" + strings.Repeat("-", 67) + "\n"
+			if redact {
+				want += "Request: POST https://example.com/login?token=%5BREDACTED%5D\n" +
+					"Header: {\"Authorization\":[\"[REDACTED]\"],\"Content-Type\":[\"application/json\"],\"Cookie\":[\"[REDACTED]\"]}\n" +
+					"Cookies: {\"session\":\"[REDACTED]\"}\n" +
+					"Body: {\"password\":\"[REDACTED]\",\"username\":\"alice\"}\n"
+			} else {
+				want += "Request: POST https://example.com/login?token=demo-token\n" +
+					"Header: {\"Authorization\":[\"Bearer demo-auth\"],\"Content-Type\":[\"application/json\"],\"Cookie\":[\"session=demo-session\"]}\n" +
+					"Cookies: {\"session\":\"demo-session\"}\n" +
+					"Body: {\"username\":\"alice\",\"password\":\"demo-pass\"}\n"
+			}
+			want += strings.Repeat("-", 67) + "\n"
+			if got := logs.String(); got != want {
+				t.Fatalf("log format:\n%s\nwant:\n%s", got, want)
+			}
+			t.Logf("actual output:\n%s", logs.String())
+		})
 	}
 }
