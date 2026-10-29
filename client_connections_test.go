@@ -37,7 +37,7 @@ func TestCloseIdleConnectionsKeepsClientUsable(t *testing.T) {
 	defer server.Close()
 	defer releaseOnce.Do(func() { close(release) })
 	connections := make(chan *trackedClientConn, 4)
-	client := NewHttpClient().CustomizeTransport(func(tr *http.Transport) {
+	client := NewClient().CustomizeTransport(func(tr *http.Transport) {
 		tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
 			conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
 			if err != nil {
@@ -49,7 +49,7 @@ func TestCloseIdleConnectionsKeepsClientUsable(t *testing.T) {
 		}
 	})
 	defer client.CloseIdleConnections()
-	if _, _, err := NewRequest(client).SetUrl(server.URL).Send().End(); err != nil {
+	if _, _, err := NewRequest(client).SetURL(server.URL).Send().End(); err != nil {
 		t.Fatal(err)
 	}
 	idle := <-connections
@@ -61,7 +61,7 @@ func TestCloseIdleConnectionsKeepsClientUsable(t *testing.T) {
 	}
 	finished := make(chan error, 1)
 	go func() {
-		_, text, err := NewRequest(client).SetUrl(server.URL + "/active").Send().End()
+		_, text, err := NewRequest(client).SetURL(server.URL + "/active").Send().End()
 		if err == nil && text != "ok" {
 			err = fmt.Errorf("unexpected body %q", text)
 		}
@@ -88,7 +88,7 @@ func TestCloseIdleConnectionsKeepsClientUsable(t *testing.T) {
 	case <-time.After(3 * time.Second):
 		t.Fatal("active request did not finish")
 	}
-	if _, _, err := NewRequest(client).SetUrl(server.URL + "/after").Send().End(); err != nil {
+	if _, _, err := NewRequest(client).SetURL(server.URL + "/after").Send().End(); err != nil {
 		t.Fatalf("client could not send another request: %v", err)
 	}
 }

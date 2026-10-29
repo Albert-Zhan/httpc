@@ -23,6 +23,8 @@ go get github.com/Albert-Zhan/httpc
 
 [API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc)
 
+新代码推荐使用 `Client`、`NewClient`、`SetURL`、`body.URL`、`body.NewURLEncode` 及 `body.JSON`、`body.HTML`、`body.XML`。旧名称仍可使用，已通过 `Deprecated:` 注释标记弃用，v1.x 中保留，可能在未来主版本中移除。
+
 ## 快速入门
 
 将以下代码保存为 `main.go`，执行 `go run main.go`。示例使用本地服务，无需准备外部接口。
@@ -44,8 +46,8 @@ func main() {
 	}))
 	defer server.Close()
 
-	client := httpc.NewHttpClient()
-	resp, text, err := httpc.NewRequest(client).SetUrl(server.URL).Send().End()
+	client := httpc.NewClient()
+	resp, text, err := httpc.NewRequest(client).SetURL(server.URL).Send().End()
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -57,7 +59,7 @@ func main() {
 
 客户端配置完成后可以被多个 goroutine 共享，每次请求创建独立的 `Request` 和请求体。`Request`、`body.Form` 等可变构建器不支持并发共享；发送期间不要修改客户端配置或正在使用的请求体。先调用 `Send()` 发送请求，再调用 `End()`、`EndByte()` 或 `EndFile()` 读取结果。
 
-以下示例均为 `main` 函数内的独立代码片段。请求示例默认已创建 `client := httpc.NewHttpClient()`；按需导入标准库包以及 `github.com/Albert-Zhan/httpc/body`，并替换示例中的接口地址。
+以下示例均为 `main` 函数内的独立代码片段。请求示例默认已创建 `client := httpc.NewClient()`；按需导入标准库包以及 `github.com/Albert-Zhan/httpc/body`，并替换示例中的接口地址。
 
 ## 请求构建
 
@@ -67,7 +69,7 @@ func main() {
 
 ```go
 resp, text, err := httpc.NewRequest(client).
-	SetUrl("https://example.com/search").
+	SetURL("https://example.com/search").
 	SetMethod("get").
 	SetHeader("Accept", "application/json").
 	AddHeader("X-Tag", "go").
@@ -95,9 +97,9 @@ fmt.Println(resp.StatusCode, text)
 ### URL 编码表单
 
 ```go
-data := body.NewUrlEncode().SetData("name", "httpc").SetData("language", "go")
+data := body.NewURLEncode().SetData("name", "httpc").SetData("language", "go")
 resp, text, err := httpc.NewRequest(client).
-	SetMethod("post").SetUrl("https://example.com/form").
+	SetMethod("post").SetURL("https://example.com/form").
 	SetBody(data).Send().End()
 if err != nil {
 	fmt.Println(err)
@@ -110,9 +112,9 @@ fmt.Println(resp.StatusCode, text)
 
 ```go
 data := body.NewRawData()
-data.SetData(`{"name":"httpc"}`, body.Json)
+data.SetData(`{"name":"httpc"}`, body.JSON)
 resp, text, err := httpc.NewRequest(client).
-	SetMethod("post").SetUrl("https://example.com/items").
+	SetMethod("post").SetURL("https://example.com/items").
 	SetBody(data).Send().End()
 if err != nil {
 	fmt.Println(err)
@@ -121,13 +123,13 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-`Raw.SetData` 接受字符串及 MIME 类型，也可使用 `body.Text`、`body.Xml`、`body.Html` 或自定义类型。`SetBody` 会根据请求体自动设置 `Content-Type`。
+`Raw.SetData` 接受字符串及 MIME 类型，也可使用 `body.Text`、`body.XML`、`body.HTML` 或自定义类型。`SetBody` 会根据请求体自动设置 `Content-Type`。
 
 ### Basic Auth 与调试
 
 ```go
 resp, text, err := httpc.NewRequest(client).
-	SetUrl("https://example.com/private").
+	SetURL("https://example.com/private").
 	SetBasicAuth("username", "password").
 	Send().End()
 if err != nil {
@@ -140,11 +142,11 @@ fmt.Println(resp.StatusCode, text)
 Basic Auth 应通过 HTTPS 传输。在 `Send()` 前调用 `SetDebug(true)` 可输出已构建请求的信息。调试默认关闭；开启后默认不脱敏，认证头、Cookie、URL 凭据及普通正文均会显示原值。默认输出到 `os.Stdout`，可指定其他 `io.Writer`，并通过 `AddDebugSensitiveFields` 选择需要脱敏的 key：
 
 ```go
-client := httpc.NewHttpClient().
+client := httpc.NewClient().
 	SetDebugOutput(os.Stderr).
 	AddDebugSensitiveFields("Authorization", "Cookie", "password", "token")
 _, _, err := httpc.NewRequest(client).
-	SetUrl("https://example.com/api").SetDebug(true).Send().End()
+	SetURL("https://example.com/api").SetDebug(true).Send().End()
 if err != nil {
 	fmt.Println(err)
 }
@@ -155,7 +157,7 @@ if err != nil {
 - URL 用户名、密码、完整用户凭据及 fragment 分别通过 `username`、`password`、`userinfo`、`fragment` 指定。可解析的未指定字段保持原值；配置脱敏后无法解析的查询部分会省略。脱敏只作用于调试日志，不修改请求或返回的错误内容。
 - 日志只读取有限大小的可重放正文副本。超过 64 KiB、不可重放的正文和二进制内容会省略；multipart 展示字段及文件名，不输出文件内容。配置脱敏后，无法解析或不支持按字段处理的正文会省略。指定 `filename` 可遮蔽文件名，指定文件字段名可隐藏该字段的日志值。
 
-调用链为 `Request.Send()` → `Request.log()` → 配置的 Writer。`Send()` 在 `request.go` 中调用 `this.log()`；`log()` 的实现位于 `debug.go`，两者同属 `httpc` 包。日志 JSON 输出和字段处理使用 Go 1.27 的 `encoding/json/v2`，并通过 `jsontext.Value` 保留大整数精度。
+调用链为 `Request.Send()` → `Request.log()` → 配置的 Writer。`Send()` 在 `request.go` 中调用 `r.log()`；`log()` 的实现位于 `debug.go`，两者同属 `httpc` 包。日志 JSON 输出和字段处理使用 Go 1.27 的 `encoding/json/v2`，并通过 `jsontext.Value` 保留大整数精度。
 
 例如，一次 POST 请求的默认日志如下（使用演示值）：
 
@@ -180,8 +182,8 @@ Body: {"username":"alice","password":"demo-pass"}
 ```go
 cookies := []*http.Cookie{{Name: "session", Value: "example"}}
 resp, text, err := httpc.NewRequest(client).
-	SetUrl("https://example.com/profile").
-	SetCookies(&cookies).Send().End()
+	SetURL("https://example.com/profile").
+	SetCookieList(cookies).Send().End()
 if err != nil {
 	fmt.Println(err)
 	return
@@ -189,16 +191,20 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
+`SetCookieList` 保存列表时复制切片；后续替换切片元素或追加 Cookie 不会改变已设置的列表。Cookie 对象仍被共享，发送期间不要修改。传入 nil 或空切片可清除该列表。
+
+旧的 `SetCookies(&cookies)` 仍可使用，已标记弃用；它保留对切片变量的引用，发送前对该变量的重新赋值或追加仍会影响请求。两个接口混用时最后一次设置生效，手动设置的 `Cookie` 请求头继续保留。
+
 ### 自动管理 Cookie
 
-`NewHttpClient()` 默认不开启 Cookie 管理。设置 CookieJar 后，复用该客户端的请求会自动保存响应 Cookie，并为匹配的请求发送 Cookie。
+`NewClient()` 默认不开启 Cookie 管理。设置 CookieJar 后，复用该客户端的请求会自动保存响应 Cookie，并为匹配的请求发送 Cookie。
 
 ```go
 jar := httpc.NewCookieJar()
-client := httpc.NewHttpClient().SetCookieJar(jar)
+client := httpc.NewClient().SetCookieJar(jar)
 
 resp, text, err := httpc.NewRequest(client).
-	SetUrl("https://example.com/login").Send().End()
+	SetURL("https://example.com/login").Send().End()
 if err != nil {
 	fmt.Println(err)
 	return
@@ -213,7 +219,7 @@ if err != nil {
 fmt.Println(jar.Cookies(u))
 
 // 后续请求自动携带匹配的 Cookie。
-_, _, err = httpc.NewRequest(client).SetUrl(u.String()).Send().End()
+_, _, err = httpc.NewRequest(client).SetURL(u.String()).Send().End()
 if err != nil {
 	fmt.Println(err)
 }
@@ -228,7 +234,7 @@ if err != nil {
 	fmt.Println(err)
 	return
 }
-client := httpc.NewHttpClient().SetCookieJar(jar)
+client := httpc.NewClient().SetCookieJar(jar)
 client.SetCookieJar(nil) // 禁用自动 Cookie 管理。
 ```
 
@@ -242,7 +248,7 @@ client.SetCookieJar(nil) // 禁用自动 Cookie 管理。
 ```go
 data := body.NewFormData().SetData("name", "httpc").SetFile("file", "./image.png")
 resp, text, err := httpc.NewRequest(client).
-	SetMethod("post").SetUrl("https://example.com/upload").
+	SetMethod("post").SetURL("https://example.com/upload").
 	SetBody(data).Send().End()
 if err != nil {
 	fmt.Println(err)
@@ -255,7 +261,7 @@ fmt.Println(resp.StatusCode, text)
 
 ```go
 resp, err := httpc.NewRequest(client).
-	SetUrl("https://example.com/archive.zip").Send().EndFile("./", "archive.zip")
+	SetURL("https://example.com/archive.zip").Send().EndFile("./", "archive.zip")
 if err != nil {
 	fmt.Println(err)
 	return
@@ -270,7 +276,7 @@ fmt.Println(resp.StatusCode)
 客户端配置应在发送请求前完成；共享客户端发送请求期间不要修改配置。
 
 ```go
-client := httpc.NewHttpClient().SetTimeout(10 * time.Second)
+client := httpc.NewClient().SetTimeout(10 * time.Second)
 
 // 设置代理，调用 ClearProxy() 恢复直连。
 client.SetProxy("http://127.0.0.1:10809")
@@ -302,10 +308,10 @@ client.CustomizeTransport(func(tr *http.Transport) {
 客户端不再需要保留连接池时，可调用 `CloseIdleConnections()` 释放当前空闲连接。它不会中断正在进行的请求，也不会关闭客户端；之后仍可继续发送请求。该方法可以与请求并发调用。
 
 ```go
-client := httpc.NewHttpClient()
+client := httpc.NewClient()
 defer client.CloseIdleConnections()
 
-resp, text, err := httpc.NewRequest(client).SetUrl("https://example.com/api").Send().End()
+resp, text, err := httpc.NewRequest(client).SetURL("https://example.com/api").Send().End()
 if err != nil {
 	fmt.Println(err)
 	return
@@ -320,7 +326,7 @@ ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 defer cancel()
 
 resp, text, err := httpc.NewRequest(client).
-	SetUrl("https://example.com/api").Send(ctx).End()
+	SetURL("https://example.com/api").Send(ctx).End()
 if err != nil {
 	fmt.Println(err)
 	return
@@ -360,7 +366,7 @@ fmt.Println(resp.StatusCode, text)
 // 另需导入 "errors" 和 "os"。
 data := body.NewFormData().SetFile("file", "./image.png")
 _, _, err := httpc.NewRequest(client).
-	SetMethod("post").SetUrl("https://example.com/upload").
+	SetMethod("post").SetURL("https://example.com/upload").
 	SetBody(data).Send().End()
 if err != nil {
 	if errors.Is(err, httpc.ErrUploadFile) {

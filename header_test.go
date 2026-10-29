@@ -12,7 +12,7 @@ import (
 )
 
 func TestRequestHeaderSemantics(t *testing.T) {
-	client := NewHttpClient()
+	client := NewClient()
 	defer client.transport.CloseIdleConnections()
 	basic := "Basic " + base64.StdEncoding.EncodeToString([]byte("user:password"))
 	for _, tc := range []struct {
@@ -39,13 +39,13 @@ func TestRequestHeaderSemantics(t *testing.T) {
 			r.SetHeader("authorization", "Bearer token").SetBasicAuth("user", "password")
 		}, []string{basic}},
 		{"automatic content type", "Content-Type", func(r *Request) {
-			r.SetBody(body.NewUrlEncode().SetData("key", "value"))
+			r.SetBody(body.NewURLEncode().SetData("key", "value"))
 		}, []string{"application/x-www-form-urlencoded"}},
 		{"manual content type", "Content-Type", func(r *Request) {
-			r.SetBody(body.NewUrlEncode().SetData("key", "value")).SetHeader("content-type", "custom/type")
+			r.SetBody(body.NewURLEncode().SetData("key", "value")).SetHeader("content-type", "custom/type")
 		}, []string{"custom/type"}},
 		{"empty content type override", "Content-Type", func(r *Request) {
-			r.SetBody(body.NewUrlEncode()).SetHeader("content-type", "")
+			r.SetBody(body.NewURLEncode()).SetHeader("content-type", "")
 		}, []string{""}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -54,7 +54,7 @@ func TestRequestHeaderSemantics(t *testing.T) {
 				observed <- r.Header.Values(tc.header)
 			}))
 			defer server.Close()
-			req := NewRequest(client).SetUrl(server.URL)
+			req := NewRequest(client).SetURL(server.URL)
 			tc.configure(req)
 			_, _, err := req.Send().End()
 			if err != nil {
@@ -69,12 +69,12 @@ func TestRequestHeaderSemantics(t *testing.T) {
 
 func TestSentHeadersDoNotShareBuilderValues(t *testing.T) {
 	var sent *http.Request
-	client := NewHttpClient()
+	client := NewClient()
 	client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
 		sent = r
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
 	})
-	req := NewRequest(client).SetUrl("http://example.test/").AddHeader("X-Tag", "one").AddHeader("x-tag", "two")
+	req := NewRequest(client).SetURL("http://example.test/").AddHeader("X-Tag", "one").AddHeader("x-tag", "two")
 	if _, _, err := req.Send().End(); err != nil {
 		t.Fatal(err)
 	}
@@ -93,10 +93,10 @@ func TestManualCookiesArePreservedWithHeaders(t *testing.T) {
 		io.WriteString(w, r.Header.Get("Cookie"))
 	}))
 	defer server.Close()
-	client := NewHttpClient()
+	client := NewClient()
 	defer client.transport.CloseIdleConnections()
 	cookies := []*http.Cookie{{Name: "second", Value: "two"}}
-	req := NewRequest(client).SetUrl(server.URL).SetHeader("cookie", "first=one").SetCookies(&cookies)
+	req := NewRequest(client).SetURL(server.URL).SetHeader("cookie", "first=one").SetCookieList(cookies)
 	_, text, err := req.Send().End()
 	if err != nil || text != "first=one; second=two" {
 		t.Fatalf("cookies = %q, error = %v", text, err)

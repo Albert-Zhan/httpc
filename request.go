@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/Albert-Zhan/httpc/body"
@@ -19,115 +20,140 @@ import (
 // Request 封装了 HTTP 请求构建和发送的逻辑
 // 每次请求应创建独立实例，不支持多个 goroutine 并发构建、发送或读取同一 Request。
 type Request struct {
-	httpc    *HttpClient
+	httpc    *Client
 	request  *http.Request
 	response *http.Response
 	method   string
 	url      string
-	param    *url.Values
+	param    url.Values
 	header   http.Header
-	cookies  *[]*http.Cookie
+	cookies  []*http.Cookie
 	data     body.Body
 	debug    bool
 	err      error
+
+	// legacyCookies preserves changes to the caller's slice variable until Send.
+	legacyCookies *[]*http.Cookie
 }
 
 // NewRequest 创建一个新的 Request 对象，默认使用 GET 方法
-func NewRequest(client *HttpClient) *Request {
+func NewRequest(client *Client) *Request {
 	return &Request{
-		httpc:   client,
-		method:  "GET",
-		param:   &url.Values{},
-		header:  make(http.Header),
-		cookies: new([]*http.Cookie),
-		debug:   false,
-		err:     nil,
+		httpc:  client,
+		method: "GET",
+		param:  make(url.Values),
+		header: make(http.Header),
+		debug:  false,
+		err:    nil,
 	}
 }
 
-// SetClient 替换请求使用的 HttpClient
-func (this *Request) SetClient(client *HttpClient) *Request {
-	this.httpc = client
-	return this
+// SetClient 替换请求使用的客户端。
+func (r *Request) SetClient(client *Client) *Request {
+	r.httpc = client
+	return r
 }
 
 // SetMethod 设置 HTTP 请求方法，自动转为大写
-func (this *Request) SetMethod(name string) *Request {
-	this.method = strings.ToUpper(name)
-	return this
+func (r *Request) SetMethod(name string) *Request {
+	r.method = strings.ToUpper(name)
+	return r
 }
 
-// SetUrl 设置请求的URL地址
-func (this *Request) SetUrl(url string) *Request {
-	this.url = url
-	return this
+// SetURL 设置请求的 URL 地址。
+func (r *Request) SetURL(rawURL string) *Request {
+	r.url = rawURL
+	return r
+}
+
+// SetUrl 设置请求的 URL 地址。
+//
+// Deprecated: 请使用 SetURL。此方法在 v1.x 中保留，可能在未来主版本中移除。
+func (r *Request) SetUrl(rawURL string) *Request {
+	return r.SetURL(rawURL)
 }
 
 // SetParam 添加 URL 查询参数，支持多次链式调用
-func (this *Request) SetParam(name, value string) *Request {
-	this.param.Add(name, value)
-	return this
+func (r *Request) SetParam(name, value string) *Request {
+	if r.param == nil {
+		r.param = make(url.Values)
+	}
+	r.param.Add(name, value)
+	return r
 }
 
 // SetHeader 设置请求头，覆盖同名头的全部旧值；名称不区分大小写。
-func (this *Request) SetHeader(name, value string) *Request {
-	this.header.Set(name, value)
-	return this
+func (r *Request) SetHeader(name, value string) *Request {
+	r.header.Set(name, value)
+	return r
 }
 
 // AddHeader 追加请求头的一个值，保留同名头的已有值；名称不区分大小写。
-func (this *Request) AddHeader(name, value string) *Request {
-	this.header.Add(name, value)
-	return this
+func (r *Request) AddHeader(name, value string) *Request {
+	r.header.Add(name, value)
+	return r
 }
 
 // SetBasicAuth 设置 HTTP Basic Auth 认证
-func (this *Request) SetBasicAuth(username, password string) *Request {
+func (r *Request) SetBasicAuth(username, password string) *Request {
 	auth := username + ":" + password
 	value := "Basic " + base64.StdEncoding.EncodeToString([]byte(auth))
-	return this.SetHeader("Authorization", value)
+	return r.SetHeader("Authorization", value)
 }
 
-// SetCookies 设置请求的 Cookie 列表
-func (this *Request) SetCookies(cookies *[]*http.Cookie) *Request {
-	this.cookies = cookies
-	return this
+// SetCookieList 设置请求的 Cookie 列表，替换此前的设置；nil 或空列表可清除列表。
+// 保存时复制切片，后续替换切片元素或追加 Cookie 不会改变此列表。
+// Cookie 对象本身仍被共享，发送期间不要修改。与 SetCookies 混用时最后一次设置生效。
+func (r *Request) SetCookieList(cookies []*http.Cookie) *Request {
+	r.cookies = slices.Clone(cookies)
+	r.legacyCookies = nil
+	return r
+}
+
+// SetCookies 设置请求的 Cookie 列表，保留对调用方切片变量的引用。
+// 调用后、Send 前对该变量的赋值或追加仍会影响请求；nil 可清除列表。
+//
+// Deprecated: 请使用 SetCookieList。此方法在 v1.x 中保留，可能在未来主版本中移除。
+func (r *Request) SetCookies(cookies *[]*http.Cookie) *Request {
+	r.cookies = nil
+	r.legacyCookies = cookies
+	return r
 }
 
 // SetDebug 设置是否开启调试模式
-// 默认输出原始请求信息，按 HttpClient.AddDebugSensitiveFields 配置脱敏。
-// 输出位置由 HttpClient.SetDebugOutput 配置。
-func (this *Request) SetDebug(d bool) *Request {
-	this.debug = d
-	return this
+// 默认输出原始请求信息，按 Client.AddDebugSensitiveFields 配置脱敏。
+// 输出位置由 Client.SetDebugOutput 配置。
+func (r *Request) SetDebug(d bool) *Request {
+	r.debug = d
+	return r
 }
 
 // SetBody 设置请求体，实现 body.Body 接口
-func (this *Request) SetBody(body body.Body) *Request {
-	this.data = body
-	return this
+func (r *Request) SetBody(body body.Body) *Request {
+	r.data = body
+	return r
 }
 
 // Send 构建并发送 HTTP 请求
 // 可选传入 context，用于控制请求超时或取消
-func (this *Request) Send(ctxs ...context.Context) *Request {
-	if this.httpc == nil || this.httpc.client == nil {
-		this.err = wrapError(ErrInvalidRequest, "send request", fmt.Errorf("client is nil"))
-		return this
+func (r *Request) Send(ctxs ...context.Context) *Request {
+	if r.httpc == nil || r.httpc.client == nil {
+		r.err = wrapError(ErrInvalidRequest, "send request", fmt.Errorf("client is nil"))
+		return r
 	}
-	requestURL := this.url
-	if len(*this.param) > 0 {
+	requestURL := r.url
+	if len(r.param) > 0 {
 		u, err := url.Parse(requestURL)
 		if err != nil {
-			this.err = wrapError(ErrInvalidRequest, "parse request URL", err)
-			return this
+			r.err = wrapError(ErrInvalidRequest, "parse request URL", err)
+			return r
 		}
 		query, err := url.ParseQuery(u.RawQuery)
 		if err != nil {
-			this.err = wrapError(ErrInvalidRequest, "parse URL query", err)
-			return this
+			r.err = wrapError(ErrInvalidRequest, "parse URL query", err)
+			return r
 		}
-		for key, values := range *this.param {
+		for key, values := range r.param {
 			for _, value := range values {
 				query.Add(key, value)
 			}
@@ -139,20 +165,20 @@ func (this *Request) Send(ctxs ...context.Context) *Request {
 	var data io.Reader
 	contentType := ""
 
-	if this.data != nil {
-		if err := requestBodyError(this.data); err != nil {
-			this.err = wrapError(ErrRequestBody, "build request body", err)
-			return this
+	if r.data != nil {
+		if err := requestBodyError(r.data); err != nil {
+			r.err = wrapError(ErrRequestBody, "build request body", err)
+			return r
 		}
-		data = this.data.Encode()
-		if err := requestBodyError(this.data); err != nil {
+		data = r.data.Encode()
+		if err := requestBodyError(r.data); err != nil {
 			if closer, ok := data.(io.Closer); ok {
 				_ = closer.Close()
 			}
-			this.err = wrapError(ErrRequestBody, "encode request body", err)
-			return this
+			r.err = wrapError(ErrRequestBody, "encode request body", err)
+			return r
 		}
-		contentType = this.data.GetContentType()
+		contentType = r.data.GetContentType()
 	}
 
 	ctx := context.Background()
@@ -160,32 +186,36 @@ func (this *Request) Send(ctxs ...context.Context) *Request {
 		ctx = ctxs[0]
 	}
 
-	this.request, this.err = http.NewRequestWithContext(ctx, this.method, requestURL, data)
-	if this.err != nil {
+	r.request, r.err = http.NewRequestWithContext(ctx, r.method, requestURL, data)
+	if r.err != nil {
 		if closer, ok := data.(io.Closer); ok {
 			_ = closer.Close()
 		}
-		this.err = wrapError(ErrInvalidRequest, "build request", this.err)
-		return this
+		r.err = wrapError(ErrInvalidRequest, "build request", r.err)
+		return r
 	}
 
-	this.request.Header = this.header.Clone()
-	if _, explicit := this.request.Header["Content-Type"]; contentType != "" && !explicit {
-		this.request.Header.Set("Content-Type", contentType)
+	r.request.Header = r.header.Clone()
+	if _, explicit := r.request.Header["Content-Type"]; contentType != "" && !explicit {
+		r.request.Header.Set("Content-Type", contentType)
 	}
-	for _, v := range *this.cookies {
-		this.request.AddCookie(v)
+	cookies := r.cookies
+	if r.legacyCookies != nil {
+		cookies = *r.legacyCookies
+	}
+	for _, v := range cookies {
+		r.request.AddCookie(v)
 	}
 
 	// log 方法实现在 debug.go 中，仅在 SetDebug(true) 时输出。
-	this.log()
+	r.log()
 
-	this.response, this.err = this.httpc.client.Do(this.request)
-	if this.err != nil {
-		this.err = wrapError(ErrSendRequest, "send request", this.err)
-		return this
+	r.response, r.err = r.httpc.client.Do(r.request)
+	if r.err != nil {
+		r.err = wrapError(ErrSendRequest, "send request", r.err)
+		return r
 	}
-	return this
+	return r
 }
 
 func requestBodyError(data body.Body) error {
@@ -196,18 +226,18 @@ func requestBodyError(data body.Body) error {
 }
 
 // GetResponse 返回 HTTP 响应对象
-func (this *Request) GetResponse() *http.Response {
-	return this.response
+func (r *Request) GetResponse() *http.Response {
+	return r.response
 }
 
 // GetError 返回请求过程中发生的错误
-func (this *Request) GetError() error {
-	return this.err
+func (r *Request) GetError() error {
+	return r.err
 }
 
 // End 执行请求并返回响应对象、响应内容字符串以及错误
-func (this *Request) End() (*http.Response, string, error) {
-	resp, bodyByte, err := this.EndByte()
+func (r *Request) End() (*http.Response, string, error) {
+	resp, bodyByte, err := r.EndByte()
 	if err != nil {
 		return resp, "", err
 	}
@@ -216,17 +246,17 @@ func (this *Request) End() (*http.Response, string, error) {
 
 // EndByte 执行请求并返回响应对象、响应内容字节数组以及错误
 // 自动处理 gzip 压缩
-func (this *Request) EndByte() (*http.Response, []byte, error) {
-	if this.err != nil {
-		return nil, nil, this.err
+func (r *Request) EndByte() (*http.Response, []byte, error) {
+	if r.err != nil {
+		return nil, nil, r.err
 	}
-	if this.response == nil {
-		this.err = wrapError(ErrInvalidRequest, "read response", fmt.Errorf("request has not been sent"))
-		return nil, nil, this.err
+	if r.response == nil {
+		r.err = wrapError(ErrInvalidRequest, "read response", fmt.Errorf("request has not been sent"))
+		return nil, nil, r.err
 	}
 
 	defer func() {
-		_ = this.response.Body.Close()
+		_ = r.response.Body.Close()
 	}()
 
 	var (
@@ -234,59 +264,59 @@ func (this *Request) EndByte() (*http.Response, []byte, error) {
 		err      error
 	)
 
-	encoding := strings.ToLower(this.response.Header.Get("Content-Encoding"))
+	encoding := strings.ToLower(r.response.Header.Get("Content-Encoding"))
 	if strings.Contains(encoding, "gzip") {
 		var gzReader *gzip.Reader
-		gzReader, err = gzip.NewReader(this.response.Body)
+		gzReader, err = gzip.NewReader(r.response.Body)
 		if err != nil {
-			this.err = wrapError(ErrDecodeResponse, "decode gzip header", err)
-			return this.response, nil, this.err
+			r.err = wrapError(ErrDecodeResponse, "decode gzip header", err)
+			return r.response, nil, r.err
 		}
 		defer gzReader.Close()
 
 		var buf bytes.Buffer
 		if _, err = io.Copy(&buf, gzReader); err != nil {
-			this.err = wrapError(ErrDecodeResponse, "decode gzip response", err)
-			return this.response, nil, this.err
+			r.err = wrapError(ErrDecodeResponse, "decode gzip response", err)
+			return r.response, nil, r.err
 		}
 		bodyByte = buf.Bytes()
 	} else {
-		bodyByte, err = io.ReadAll(this.response.Body)
+		bodyByte, err = io.ReadAll(r.response.Body)
 		if err != nil {
-			if this.response.Uncompressed {
-				this.err = wrapError(ErrDecodeResponse, "read decompressed response body", err)
+			if r.response.Uncompressed {
+				r.err = wrapError(ErrDecodeResponse, "read decompressed response body", err)
 			} else {
-				this.err = wrapError(ErrReadResponse, "read response body", err)
+				r.err = wrapError(ErrReadResponse, "read response body", err)
 			}
-			return this.response, nil, this.err
+			return r.response, nil, r.err
 		}
 	}
 
-	return this.response, bodyByte, nil
+	return r.response, bodyByte, nil
 }
 
 // EndFile 将响应体保存为文件
 // savePath 为目录路径，saveFileName 可为空，自动根据 URL 获取文件名
-func (this *Request) EndFile(savePath, saveFileName string) (resp *http.Response, err error) {
-	if this.err != nil {
-		return nil, this.err
+func (r *Request) EndFile(savePath, saveFileName string) (resp *http.Response, err error) {
+	if r.err != nil {
+		return nil, r.err
 	}
-	if this.response == nil {
-		this.err = wrapError(ErrInvalidRequest, "save response file", fmt.Errorf("request has not been sent"))
-		return nil, this.err
+	if r.response == nil {
+		r.err = wrapError(ErrInvalidRequest, "save response file", fmt.Errorf("request has not been sent"))
+		return nil, r.err
 	}
 
 	defer func() {
-		_ = this.response.Body.Close()
+		_ = r.response.Body.Close()
 	}()
 
-	if this.response.StatusCode != http.StatusOK {
-		this.err = wrapError(ErrHTTPStatus, "save response file", fmt.Errorf("server responded with HTTP %d", this.response.StatusCode))
-		return this.response, this.err
+	if r.response.StatusCode != http.StatusOK {
+		r.err = wrapError(ErrHTTPStatus, "save response file", fmt.Errorf("server responded with HTTP %d", r.response.StatusCode))
+		return r.response, r.err
 	}
 
 	if saveFileName == "" {
-		u, err := url.Parse(this.request.URL.String())
+		u, err := url.Parse(r.request.URL.String())
 		if err == nil {
 			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
 			if len(parts) > 0 {
@@ -301,20 +331,20 @@ func (this *Request) EndFile(savePath, saveFileName string) (resp *http.Response
 	destPath := filepath.Join(savePath, saveFileName)
 	file, err := os.Create(destPath)
 	if err != nil {
-		this.err = wrapError(ErrSaveFile, "create download file", err)
-		return this.response, this.err
+		r.err = wrapError(ErrSaveFile, "create download file", err)
+		return r.response, r.err
 	}
 	defer func() {
 		if closeErr := file.Close(); err == nil && closeErr != nil {
-			this.err = wrapError(ErrSaveFile, "close download file", closeErr)
-			err = this.err
+			r.err = wrapError(ErrSaveFile, "close download file", closeErr)
+			err = r.err
 		}
 	}()
-	_, err = io.Copy(file, this.response.Body)
+	_, err = io.Copy(file, r.response.Body)
 	if err != nil {
-		this.err = wrapError(ErrSaveFile, "write download file", err)
-		return this.response, this.err
+		r.err = wrapError(ErrSaveFile, "write download file", err)
+		return r.response, r.err
 	}
 
-	return this.response, nil
+	return r.response, nil
 }

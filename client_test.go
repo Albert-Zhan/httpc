@@ -21,7 +21,7 @@ func TestInvalidProxyBlocksRequests(t *testing.T) {
 		proxyCalls.Add(1)
 	}))
 	defer proxy.Close()
-	client := NewHttpClient()
+	client := NewClient()
 	defer client.transport.CloseIdleConnections()
 	for _, address := range []string{
 		"://bad-proxy", "", "127.0.0.1:8080", "http:///missing-host",
@@ -31,7 +31,7 @@ func TestInvalidProxyBlocksRequests(t *testing.T) {
 		t.Run(address, func(t *testing.T) {
 			// An invalid update must not fall back to either the previous proxy or direct access.
 			client.SetProxy(proxy.URL).SetProxy(address)
-			req := NewRequest(client).SetUrl(target.URL).Send()
+			req := NewRequest(client).SetURL(target.URL).Send()
 			_, _, err := req.End()
 			if !errors.Is(err, ErrInvalidProxy) || req.GetError() == nil {
 				t.Errorf("invalid proxy %q did not return a request error", address)
@@ -52,11 +52,11 @@ func TestClientNegotiatesHTTP2(t *testing.T) {
 	defer server.Close()
 	pool := x509.NewCertPool()
 	pool.AddCert(server.Certificate())
-	client := NewHttpClient().CustomizeTransport(func(tr *http.Transport) {
+	client := NewClient().CustomizeTransport(func(tr *http.Transport) {
 		tr.TLSClientConfig.RootCAs = pool
 	})
 	defer client.transport.CloseIdleConnections()
-	resp, _, err := NewRequest(client).SetUrl(server.URL).Send().End()
+	resp, _, err := NewRequest(client).SetURL(server.URL).Send().End()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestProxyRecovery(t *testing.T) {
 		io.WriteString(w, "proxied")
 	}))
 	defer proxy.Close()
-	client := NewHttpClient()
+	client := NewClient()
 	defer client.transport.CloseIdleConnections()
 	for _, tc := range []struct {
 		name, want string
@@ -95,7 +95,7 @@ func TestProxyRecovery(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.configure()
-			_, text, err := NewRequest(client).SetUrl(target.URL).Send().End()
+			_, text, err := NewRequest(client).SetURL(target.URL).Send().End()
 			if err != nil || text != tc.want {
 				t.Fatalf("response = %q, error = %v, want %q", text, err, tc.want)
 			}
@@ -110,7 +110,7 @@ func TestSupportedProxyAddresses(t *testing.T) {
 		"socks5h://localhost:1080", "http://user:password@proxy.example:8080", "http://[::1]:8080",
 	} {
 		t.Run(address, func(t *testing.T) {
-			client := NewHttpClient().SetProxy(address)
+			client := NewClient().SetProxy(address)
 			u, err := client.transport.Proxy(req)
 			if err != nil || u == nil || u.String() != address {
 				t.Fatalf("proxy = %v, error = %v, want %s", u, err, address)

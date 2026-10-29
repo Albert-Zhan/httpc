@@ -8,8 +8,8 @@ import (
 )
 
 func ExampleError() {
-	client := httpc.NewHttpClient().SetProxy("://invalid-proxy")
-	_, _, err := httpc.NewRequest(client).SetUrl("http://example.test/").Send().End()
+	client := httpc.NewClient().SetProxy("://invalid-proxy")
+	_, _, err := httpc.NewRequest(client).SetURL("http://example.test/").Send().End()
 	fmt.Println(errors.Is(err, httpc.ErrInvalidProxy))
 	fmt.Println(errors.Is(err, httpc.ErrSendRequest))
 	var detail *httpc.Error

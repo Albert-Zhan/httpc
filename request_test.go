@@ -18,7 +18,7 @@ func TestSendMergesQueryParameters(t *testing.T) {
 		io.WriteString(w, r.URL.RawQuery)
 	}))
 	defer server.Close()
-	client := NewHttpClient()
+	client := NewClient()
 	defer client.transport.CloseIdleConnections()
 
 	for _, tc := range []struct {
@@ -33,7 +33,7 @@ func TestSendMergesQueryParameters(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			originalURL := server.URL + tc.suffix
-			req := NewRequest(client).SetUrl(originalURL).SetParam("q", "go & http")
+			req := NewRequest(client).SetURL(originalURL).SetParam("q", "go & http")
 			_, text, err := req.Send().End()
 			if err != nil {
 				t.Fatal(err)
@@ -50,13 +50,13 @@ func TestSendMergesQueryParameters(t *testing.T) {
 }
 
 func TestSendRejectsMalformedQuery(t *testing.T) {
-	client := NewHttpClient()
+	client := NewClient()
 	called := false
 	client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
 		called = true
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
 	})
-	_, _, err := NewRequest(client).SetUrl("http://example.test/?bad=%zz").SetParam("q", "go").Send().End()
+	_, _, err := NewRequest(client).SetURL("http://example.test/?bad=%zz").SetParam("q", "go").Send().End()
 	if !errors.Is(err, ErrInvalidRequest) || called {
 		t.Fatalf("err = %v, transport called = %v; want error before sending", err, called)
 	}
@@ -89,7 +89,7 @@ func TestEndFileClosesResponseBody(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body := &trackedResponseBody{Reader: strings.NewReader("download content")}
-			client := NewHttpClient()
+			client := NewClient()
 			client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
 				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: body, Request: r}, nil
 			})
@@ -97,7 +97,7 @@ func TestEndFileClosesResponseBody(t *testing.T) {
 			if tc.missingDir {
 				dir = filepath.Join(dir, "missing")
 			}
-			resp, err := NewRequest(client).SetUrl("http://example.test/file").Send().EndFile(dir, "file.txt")
+			resp, err := NewRequest(client).SetURL("http://example.test/file").Send().EndFile(dir, "file.txt")
 			wantError := tc.status != http.StatusOK || tc.missingDir
 			if (err != nil) != wantError || resp == nil || resp.StatusCode != tc.status {
 				t.Fatalf("response = %v, error = %v, wantError = %v", resp, err, wantError)

@@ -56,11 +56,11 @@ func TestResponseErrorsKeepTheirCauses(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			responseBody := &trackedResponseBody{Reader: tc.reader}
-			client := NewHttpClient()
+			client := NewClient()
 			client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
 				return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Encoding": {tc.encoding}}, Body: responseBody}, nil
 			})
-			req := NewRequest(client).SetUrl("http://example.test/").Send()
+			req := NewRequest(client).SetURL("http://example.test/").Send()
 			_, _, err := req.EndByte()
 			assertError(t, err, tc.kind, tc.cause)
 			if req.GetError() != err || !responseBody.closed {
@@ -86,12 +86,12 @@ func TestUploadErrorsStopRequests(t *testing.T) {
 				t.Fatalf("Form.Err = %v, want %v", tc.form.Err(), tc.kind)
 			}
 			called := false
-			client := NewHttpClient()
+			client := NewClient()
 			client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
 				called = true
 				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
 			})
-			req := NewRequest(client).SetMethod("post").SetUrl("http://example.test/upload").SetBody(tc.form).Send()
+			req := NewRequest(client).SetMethod("post").SetURL("http://example.test/upload").SetBody(tc.form).Send()
 			_, _, err := req.End()
 			assertError(t, err, tc.kind, nil)
 			if !errors.Is(err, ErrRequestBody) || called || req.GetError() != err {
@@ -122,9 +122,9 @@ func TestAutomaticGzipDecodeError(t *testing.T) {
 		w.Write(corrupt)
 	}))
 	defer server.Close()
-	client := NewHttpClient()
+	client := NewClient()
 	defer client.transport.CloseIdleConnections()
-	resp, _, err := NewRequest(client).SetUrl(server.URL).Send().EndByte()
+	resp, _, err := NewRequest(client).SetURL(server.URL).Send().EndByte()
 	assertError(t, err, ErrDecodeResponse, gzip.ErrChecksum)
 	if resp == nil || !resp.Uncompressed {
 		t.Fatal("test did not exercise standard transport gzip decompression")
@@ -149,7 +149,7 @@ func (b *lateErrorBody) Err() error { return b.err }
 
 func TestCustomBodyErrorCheckingIsOptional(t *testing.T) {
 	called := 0
-	client := NewHttpClient()
+	client := NewClient()
 	client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
 		called++
 		data, err := io.ReadAll(r.Body)
@@ -158,11 +158,11 @@ func TestCustomBodyErrorCheckingIsOptional(t *testing.T) {
 		}
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
 	})
-	_, _, err := NewRequest(client).SetUrl("http://example.test/").SetBody(customBody{}).Send().End()
+	_, _, err := NewRequest(client).SetURL("http://example.test/").SetBody(customBody{}).Send().End()
 	if err != nil || called != 1 {
 		t.Fatalf("custom body failed: %v, calls = %d", err, called)
 	}
-	_, _, err = NewRequest(client).SetUrl("http://example.test/").SetBody(&lateErrorBody{}).Send().End()
+	_, _, err = NewRequest(client).SetURL("http://example.test/").SetBody(&lateErrorBody{}).Send().End()
 	assertError(t, err, ErrRequestBody, io.ErrUnexpectedEOF)
 	if called != 1 {
 		t.Fatal("body encoding failure did not prevent sending")
@@ -170,18 +170,18 @@ func TestCustomBodyErrorCheckingIsOptional(t *testing.T) {
 }
 
 func TestSendErrorPreservesCancellation(t *testing.T) {
-	client := NewHttpClient()
+	client := NewClient()
 	client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
 		return nil, context.Canceled
 	})
-	_, _, err := NewRequest(client).SetUrl("http://example.test/").Send().End()
+	_, _, err := NewRequest(client).SetURL("http://example.test/").Send().End()
 	assertError(t, err, ErrSendRequest, context.Canceled)
 }
 
 func TestReadBeforeSendReturnsError(t *testing.T) {
-	_, _, err := NewRequest(NewHttpClient()).End()
+	_, _, err := NewRequest(NewClient()).End()
 	assertError(t, err, ErrInvalidRequest, nil)
-	_, err = NewRequest(NewHttpClient()).EndFile(t.TempDir(), "file")
+	_, err = NewRequest(NewClient()).EndFile(t.TempDir(), "file")
 	assertError(t, err, ErrInvalidRequest, nil)
 }
 
@@ -200,11 +200,11 @@ func TestDownloadErrorsAreClassified(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			responseBody := &trackedResponseBody{Reader: tc.reader}
-			client := NewHttpClient()
+			client := NewClient()
 			client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
 				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: responseBody}, nil
 			})
-			req := NewRequest(client).SetUrl("http://example.test/file").Send()
+			req := NewRequest(client).SetURL("http://example.test/file").Send()
 			_, err := req.EndFile(tc.dir, "file")
 			assertError(t, err, tc.kind, tc.cause)
 			if req.GetError() != err || !responseBody.closed {
@@ -215,11 +215,11 @@ func TestDownloadErrorsAreClassified(t *testing.T) {
 }
 
 func TestEndDoesNotTreatHTTPStatusAsError(t *testing.T) {
-	client := NewHttpClient()
+	client := NewClient()
 	client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusNotFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("not found"))}, nil
 	})
-	resp, text, err := NewRequest(client).SetUrl("http://example.test/").Send().End()
+	resp, text, err := NewRequest(client).SetURL("http://example.test/").Send().End()
 	if err != nil || resp.StatusCode != http.StatusNotFound || text != "not found" {
 		t.Fatalf("response = %v, body = %q, error = %v", resp, text, err)
 	}
