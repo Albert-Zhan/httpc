@@ -193,6 +193,7 @@ client.SetCookieJar(nil) // 禁用自动 Cookie 管理。
 ### 上传文件
 
 文件需提前存在，普通字段和文件字段一起使用 `multipart/form-data` 编码。
+表单保留构建或编码时遇到的第一个错误，可通过 `data.Err()` 提前检查；`Send()` 也会自动检查，发生错误时不会发送请求。编码完成后不能再添加字段或文件。
 
 ```go
 data := body.NewFormData().SetData("name", "httpc").SetFile("file", "./image.png")
@@ -248,6 +249,8 @@ client.CustomizeTransport(func(tr *http.Transport) {
 
 默认总请求超时为 30 秒，响应头超时为 15 秒，最低 TLS 版本为 TLS 1.2。`SetTimeout(0)` 取消客户端总超时，Transport 的响应头超时等配置仍然生效。
 
+默认支持 HTTPS 的 HTTP/2 协商；连接建立超时为 30 秒，TLS 握手超时为 10 秒，空闲连接回收时间为 90 秒，`Expect: 100-continue` 等待时间为 1 秒。这些 Transport 配置均可通过 `CustomizeTransport` 调整。
+
 代理地址支持 `http`、`https`、`socks5` 和 `socks5h`，必须包含协议和主机，指定端口时需在 1–65535 范围内。非法地址会在 `Send()` 时产生请求错误，可通过 `End()` 或 `GetError()` 获取；设置合法代理或调用 `ClearProxy()` 可恢复请求。
 
 ### context 超时与取消
@@ -276,6 +279,46 @@ fmt.Println(resp.StatusCode, text)
 | `EndFile(dir, name)` | `(*http.Response, error)` | 将响应保存为文件 |
 
 每次请求选择一种读取方式。`End`、`EndByte` 在读取后关闭响应体，并支持 gzip 解码。需要响应头、状态码或响应 Cookie 时，可读取返回的 `resp`；`GetResponse()`、`GetError()` 也可用于获取请求结果。
+
+## 错误处理
+
+使用标准库 `errors.Is(err, httpc.ErrXXX)` 判断错误类别，第一个参数是实际返回的错误。使用 `errors.As` 获取 `*httpc.Error`，其中 `Op` 表示失败的操作，`Kind` 表示类别，`Err` 保留底层原因。
+
+| 错误 | 含义 |
+| --- | --- |
+| `ErrInvalidRequest` | 请求 URL、参数、方法或调用状态无效 |
+| `ErrInvalidProxy` | 代理地址无效 |
+| `ErrRequestBody` | 请求体构建或编码失败，包括上传错误 |
+| `ErrUploadFile` | 上传文件打开、读取或写入表单失败 |
+| `ErrSendRequest` | 请求发送失败，包括连接、TLS、代理、取消或超时 |
+| `ErrReadResponse` | 普通响应体读取失败 |
+| `ErrDecodeResponse` | gzip 响应头解析或解压失败 |
+| `ErrSaveFile` | 下载文件创建、写入或关闭失败 |
+| `ErrHTTPStatus` | `EndFile` 收到非 200 状态码 |
+
+```go
+// 另需导入 "errors" 和 "os"。
+data := body.NewFormData().SetFile("file", "./image.png")
+_, _, err := httpc.NewRequest(client).
+	SetMethod("post").SetUrl("https://example.com/upload").
+	SetBody(data).Send().End()
+if err != nil {
+	if errors.Is(err, httpc.ErrUploadFile) {
+		fmt.Println("上传文件处理失败")
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		fmt.Println("文件不存在")
+	}
+	var detail *httpc.Error
+	if errors.As(err, &detail) {
+		fmt.Println(detail.Op, detail.Kind)
+	}
+}
+```
+
+错误链可以匹配多个类别。例如上传文件不存在会匹配 `ErrRequestBody`、`ErrUploadFile` 和 `os.ErrNotExist`；代理配置导致发送失败会匹配 `ErrSendRequest` 和 `ErrInvalidProxy`。底层的 `*os.PathError`、`*url.Error` 以及 `context.Canceled` 等错误仍可通过 `errors.As` 或 `errors.Is` 判断。
+
+`GetError()` 保留最近一次发送或读取失败的错误。`End()` 和 `EndByte()` 不把 4xx/5xx 状态码视为错误，需要调用者检查 `resp.StatusCode`；`ErrHTTPStatus` 仅用于要求 `200 OK` 的 `EndFile()`。未调用 `Send()` 就读取响应时，会返回 `ErrInvalidRequest`。
 
 ## License
 

@@ -1,6 +1,7 @@
 package httpc
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,7 +57,7 @@ func TestSendRejectsMalformedQuery(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
 	})
 	_, _, err := NewRequest(client).SetUrl("http://example.test/?bad=%zz").SetParam("q", "go").Send().End()
-	if err == nil || called {
+	if !errors.Is(err, ErrInvalidRequest) || called {
 		t.Fatalf("err = %v, transport called = %v; want error before sending", err, called)
 	}
 }

@@ -5,15 +5,15 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/base64"
-	"errors"
 	"fmt"
-	"github.com/Albert-Zhan/httpc/body"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Albert-Zhan/httpc/body"
 )
 
 // Request 封装了 HTTP 请求构建和发送的逻辑
@@ -104,16 +104,20 @@ func (this *Request) SetBody(body body.Body) *Request {
 // Send 构建并发送 HTTP 请求
 // 可选传入 context，用于控制请求超时或取消
 func (this *Request) Send(ctxs ...context.Context) *Request {
+	if this.httpc == nil || this.httpc.client == nil {
+		this.err = wrapError(ErrInvalidRequest, "send request", fmt.Errorf("client is nil"))
+		return this
+	}
 	requestURL := this.url
 	if len(*this.param) > 0 {
 		u, err := url.Parse(requestURL)
 		if err != nil {
-			this.err = err
+			this.err = wrapError(ErrInvalidRequest, "parse request URL", err)
 			return this
 		}
 		query, err := url.ParseQuery(u.RawQuery)
 		if err != nil {
-			this.err = fmt.Errorf("httpc: invalid URL query: %w", err)
+			this.err = wrapError(ErrInvalidRequest, "parse URL query", err)
 			return this
 		}
 		for key, values := range *this.param {
@@ -129,7 +133,18 @@ func (this *Request) Send(ctxs ...context.Context) *Request {
 	contentType := ""
 
 	if this.data != nil {
+		if err := requestBodyError(this.data); err != nil {
+			this.err = wrapError(ErrRequestBody, "build request body", err)
+			return this
+		}
 		data = this.data.Encode()
+		if err := requestBodyError(this.data); err != nil {
+			if closer, ok := data.(io.Closer); ok {
+				_ = closer.Close()
+			}
+			this.err = wrapError(ErrRequestBody, "encode request body", err)
+			return this
+		}
 		contentType = this.data.GetContentType()
 	}
 
@@ -140,6 +155,10 @@ func (this *Request) Send(ctxs ...context.Context) *Request {
 
 	this.request, this.err = http.NewRequestWithContext(ctx, this.method, requestURL, data)
 	if this.err != nil {
+		if closer, ok := data.(io.Closer); ok {
+			_ = closer.Close()
+		}
+		this.err = wrapError(ErrInvalidRequest, "build request", this.err)
 		return this
 	}
 
@@ -157,9 +176,17 @@ func (this *Request) Send(ctxs ...context.Context) *Request {
 
 	this.response, this.err = this.httpc.client.Do(this.request)
 	if this.err != nil {
+		this.err = wrapError(ErrSendRequest, "send request", this.err)
 		return this
 	}
 	return this
+}
+
+func requestBodyError(data body.Body) error {
+	if b, ok := data.(interface{ Err() error }); ok {
+		return b.Err()
+	}
+	return nil
 }
 
 // GetResponse 返回 HTTP 响应对象
@@ -202,6 +229,10 @@ func (this *Request) EndByte() (*http.Response, []byte, error) {
 	if this.err != nil {
 		return nil, nil, this.err
 	}
+	if this.response == nil {
+		this.err = wrapError(ErrInvalidRequest, "read response", fmt.Errorf("request has not been sent"))
+		return nil, nil, this.err
+	}
 
 	defer func() {
 		_ = this.response.Body.Close()
@@ -217,19 +248,26 @@ func (this *Request) EndByte() (*http.Response, []byte, error) {
 		var gzReader *gzip.Reader
 		gzReader, err = gzip.NewReader(this.response.Body)
 		if err != nil {
-			return this.response, nil, errors.New("gzip decode failed:" + err.Error())
+			this.err = wrapError(ErrDecodeResponse, "decode gzip header", err)
+			return this.response, nil, this.err
 		}
 		defer gzReader.Close()
 
 		var buf bytes.Buffer
 		if _, err = io.Copy(&buf, gzReader); err != nil {
-			return this.response, nil, errors.New("gzip read failed:" + err.Error())
+			this.err = wrapError(ErrDecodeResponse, "decode gzip response", err)
+			return this.response, nil, this.err
 		}
 		bodyByte = buf.Bytes()
 	} else {
 		bodyByte, err = io.ReadAll(this.response.Body)
 		if err != nil {
-			return this.response, nil, errors.New("read body failed:" + err.Error())
+			if this.response.Uncompressed {
+				this.err = wrapError(ErrDecodeResponse, "read decompressed response body", err)
+			} else {
+				this.err = wrapError(ErrReadResponse, "read response body", err)
+			}
+			return this.response, nil, this.err
 		}
 	}
 
@@ -238,8 +276,12 @@ func (this *Request) EndByte() (*http.Response, []byte, error) {
 
 // EndFile 将响应体保存为文件
 // savePath 为目录路径，saveFileName 可为空，自动根据 URL 获取文件名
-func (this *Request) EndFile(savePath, saveFileName string) (*http.Response, error) {
+func (this *Request) EndFile(savePath, saveFileName string) (resp *http.Response, err error) {
 	if this.err != nil {
+		return nil, this.err
+	}
+	if this.response == nil {
+		this.err = wrapError(ErrInvalidRequest, "save response file", fmt.Errorf("request has not been sent"))
 		return nil, this.err
 	}
 
@@ -248,7 +290,8 @@ func (this *Request) EndFile(savePath, saveFileName string) (*http.Response, err
 	}()
 
 	if this.response.StatusCode != http.StatusOK {
-		return this.response, errors.New("failed to write: server responded with non-200 status")
+		this.err = wrapError(ErrHTTPStatus, "save response file", fmt.Errorf("server responded with HTTP %d", this.response.StatusCode))
+		return this.response, this.err
 	}
 
 	if saveFileName == "" {
@@ -267,14 +310,19 @@ func (this *Request) EndFile(savePath, saveFileName string) (*http.Response, err
 	destPath := filepath.Join(savePath, saveFileName)
 	file, err := os.Create(destPath)
 	if err != nil {
-		return this.response, err
+		this.err = wrapError(ErrSaveFile, "create download file", err)
+		return this.response, this.err
 	}
 	defer func() {
-		_ = file.Close()
+		if closeErr := file.Close(); err == nil && closeErr != nil {
+			this.err = wrapError(ErrSaveFile, "close download file", closeErr)
+			err = this.err
+		}
 	}()
 	_, err = io.Copy(file, this.response.Body)
 	if err != nil {
-		return this.response, err
+		this.err = wrapError(ErrSaveFile, "write download file", err)
+		return this.response, this.err
 	}
 
 	return this.response, nil

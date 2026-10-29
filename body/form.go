@@ -15,6 +15,8 @@ import (
 type Form struct {
 	dataBuf *bytes.Buffer
 	data    *multipart.Writer
+	err     error
+	closed  bool
 }
 
 // NewFormData 创建一个新的 Form 实例
@@ -31,7 +33,12 @@ func NewFormData() *Form {
 // SetBoundary 手动设置 multipart/form-data 边界值
 // 一般情况下不需要手动设置边界，除非对外兼容性有特殊要求
 func (this *Form) SetBoundary(boundary string) *Form {
-	_ = this.data.SetBoundary(boundary)
+	if !this.canWrite() {
+		return this
+	}
+	if err := this.data.SetBoundary(boundary); err != nil {
+		this.setError(ErrRequestBody, "set multipart boundary", err)
+	}
 	return this
 }
 
@@ -39,7 +46,12 @@ func (this *Form) SetBoundary(boundary string) *Form {
 // 参数 name 表示字段名，value 表示字段内容
 // 支持多次链式调用
 func (this *Form) SetData(name, value string) *Form {
-	_ = this.data.WriteField(name, value)
+	if !this.canWrite() {
+		return this
+	}
+	if err := this.data.WriteField(name, value); err != nil {
+		this.setError(ErrRequestBody, "write multipart field", err)
+	}
 	return this
 }
 
@@ -47,14 +59,48 @@ func (this *Form) SetData(name, value string) *Form {
 // 参数 name 为表单字段名，file 为本地文件路径
 // 支持多次链式调用
 func (this *Form) SetFile(name, file string) *Form {
+	if !this.canWrite() {
+		return this
+	}
 	fd, err := os.Open(file)
 	if err != nil {
-		panic("file does not exist")
+		this.setError(ErrUploadFile, "open upload file", err)
+		return this
 	}
-	defer fd.Close()
-	fileWriter, _ := this.data.CreateFormFile(name, filepath.Base(file))
-	_, _ = io.Copy(fileWriter, fd)
+	defer func() {
+		if err := fd.Close(); err != nil {
+			this.setError(ErrUploadFile, "close upload file", err)
+		}
+	}()
+	fileWriter, err := this.data.CreateFormFile(name, filepath.Base(file))
+	if err != nil {
+		this.setError(ErrUploadFile, "create multipart file field", err)
+		return this
+	}
+	if _, err := io.Copy(fileWriter, fd); err != nil {
+		this.setError(ErrUploadFile, "copy upload file", err)
+	}
 	return this
+}
+
+// Err 返回构建或编码时遇到的第一个错误；发生错误后不再继续修改表单。
+func (this *Form) Err() error { return this.err }
+
+func (this *Form) setError(kind error, op string, err error) {
+	if this.err == nil {
+		this.err = fmt.Errorf("%w: %s: %w", kind, op, err)
+	}
+}
+
+func (this *Form) canWrite() bool {
+	if this.err != nil {
+		return false
+	}
+	if this.closed {
+		this.setError(ErrRequestBody, "modify multipart form", fmt.Errorf("form is already encoded"))
+		return false
+	}
+	return true
 }
 
 // GetData 返回当前 Form 的 multipart 数据文本形式
@@ -64,6 +110,7 @@ func (this *Form) GetData() string {
 	r := multipart.NewReader(br, this.data.Boundary())
 	form, err := r.ReadForm(32 << 20)
 	if err == nil {
+		defer form.RemoveAll()
 		var sb strings.Builder
 		boundary := this.data.Boundary()
 		header := fmt.Sprintf("--%s\r\n", boundary)
@@ -101,6 +148,14 @@ func (this *Form) GetContentType() string {
 // 返回的 io.Reader 可直接作为 HTTP 请求 body
 // 注意：调用 Encode() 后将无法再次向 Form 中添加字段
 func (this *Form) Encode() io.Reader {
-	_ = this.data.Close()
-	return io.NopCloser(this.dataBuf)
+	if this.err == nil && !this.closed {
+		if err := this.data.Close(); err != nil {
+			this.setError(ErrRequestBody, "encode multipart form", err)
+		}
+		this.closed = true
+	}
+	if this.err != nil {
+		return errorReader{err: this.err}
+	}
+	return bytes.NewReader(this.dataBuf.Bytes())
 }

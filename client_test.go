@@ -1,11 +1,14 @@
 package httpc
 
 import (
+	"crypto/x509"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestInvalidProxyBlocksRequests(t *testing.T) {
@@ -30,13 +33,42 @@ func TestInvalidProxyBlocksRequests(t *testing.T) {
 			client.SetProxy(proxy.URL).SetProxy(address)
 			req := NewRequest(client).SetUrl(target.URL).Send()
 			_, _, err := req.End()
-			if err == nil || req.GetError() == nil {
+			if !errors.Is(err, ErrInvalidProxy) || req.GetError() == nil {
 				t.Errorf("invalid proxy %q did not return a request error", address)
 			}
 		})
 	}
 	if targetCalls.Load() != 0 || proxyCalls.Load() != 0 {
 		t.Fatalf("invalid proxy sent network requests: target=%d, previous proxy=%d", targetCalls.Load(), proxyCalls.Load())
+	}
+}
+
+func TestClientNegotiatesHTTP2(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Proto)
+	}))
+	server.EnableHTTP2 = true
+	server.StartTLS()
+	defer server.Close()
+	pool := x509.NewCertPool()
+	pool.AddCert(server.Certificate())
+	client := NewHttpClient().CustomizeTransport(func(tr *http.Transport) {
+		tr.TLSClientConfig.RootCAs = pool
+	})
+	defer client.transport.CloseIdleConnections()
+	resp, _, err := NewRequest(client).SetUrl(server.URL).Send().End()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.ProtoMajor != 2 {
+		t.Fatalf("protocol = %s, want HTTP/2", resp.Proto)
+	}
+	tr := client.transport
+	if tr.Proxy != nil || tr.DialContext == nil || tr.IdleConnTimeout <= 0 || tr.TLSHandshakeTimeout <= 0 || tr.ExpectContinueTimeout <= 0 {
+		t.Fatal("transport is missing connection defaults or changed the direct-access default")
+	}
+	if client.client.Timeout != 30*time.Second || tr.ResponseHeaderTimeout != 15*time.Second {
+		t.Fatal("existing client or response header timeout was changed")
 	}
 }
 

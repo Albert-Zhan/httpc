@@ -3,6 +3,7 @@ package httpc
 import (
 	"crypto/tls"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -20,10 +21,18 @@ type HttpClient struct {
 // NewHttpClient 创建并返回一个默认配置的 HttpClient 实例
 func NewHttpClient() *HttpClient {
 	defaultTransport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
 		MaxIdleConns:          200,
 		MaxIdleConnsPerHost:   50,
 		MaxConnsPerHost:       100,
 		ResponseHeaderTimeout: 15 * time.Second,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: time.Second,
 		TLSClientConfig: &tls.Config{
 			MinVersion: tls.VersionTLS12,
 		},
@@ -68,7 +77,7 @@ func (this *HttpClient) SetProxy(proxyUrl string) *HttpClient {
 		}
 	}
 	if err != nil {
-		proxyErr := fmt.Errorf("httpc: invalid proxy URL: %w", err)
+		proxyErr := wrapError(ErrInvalidProxy, "configure proxy", err)
 		this.transport.Proxy = func(*http.Request) (*url.URL, error) {
 			return nil, proxyErr
 		}
