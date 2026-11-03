@@ -22,17 +22,23 @@ go tool cover -func=coverage.out
 
 | 文件 | 范围 |
 | --- | --- |
-| `client_test.go` | 代理、TLS、HTTP/2、Transport 扩展和连接管理 |
+| `client_test.go` | 代理、TLS 和 HTTP/2 默认配置 |
+| `transport_test.go` | 包装顺序、配置校验、独立 Transport 和空闲连接管理 |
 | `request_test.go` | URL、查询参数和发送状态 |
 | `request_header_test.go` | 请求头、默认 User-Agent 和 Cookie |
 | `request_body_test.go` | 正文发送、上传校验和重定向重放 |
-| `response_test.go` | 响应读取、Writer 输出、大小限制、解压、下载和读取状态 |
-| `debug_test.go` | 发送阶段日志、重定向与重试、脱敏和日志并发写入 |
-| `test_helpers_test.go` | 多个测试文件共用的 Transport、读写计数器和错误断言 |
+| `response_test.go` | 响应读取、Writer 输出、下载和读取状态 |
+| `response_gzip_test.go` | gzip 解码、空正文、截断和错误链 |
+| `response_limit_test.go` | 正文大小限制、流式边界和压缩响应限额 |
+| `debug_test.go` | 日志格式、正文预览、脱敏和并发输出 |
+| `debug_transport_test.go` | 发送阶段采集、重定向、重试、调用方 Trace 和包装器集成 |
+| `test_helpers_test.go` | 多个测试文件共用的 Transport、读写替身、响应构造及错误断言 |
 | `api_compat_test.go`、`example_test.go` | 使用 `httpc_test` 包验证公共接口兼容性和可执行示例 |
 | `body/*_test.go` | 各类正文的编码和构建错误 |
 
 使用 `Test<行为>` 命名测试，用具名 `t.Run` 区分同一行为的输入；不按修复日期、问题编号创建零散文件。辅助函数调用 `t.Helper()`，仅供单个模块使用的辅助类型留在该模块的测试文件中。通过 `t.Cleanup`、`t.TempDir` 或 `defer` 释放连接、临时文件和本地服务。
+
+同一职责的用例优先归在一起；文件过长时按行为边界拆分，避免持续向单个文件追加无关内容。README 示例保持可编译，并区分操作错误与 HTTP 状态码；公共 API 的可执行示例维护在 `example_test.go`。
 
 发布版本校验脚本的测试需要 Python 3：
 

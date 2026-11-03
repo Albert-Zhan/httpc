@@ -4,17 +4,15 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/Albert-Zhan/httpc.svg)](https://pkg.go.dev/github.com/Albert-Zhan/httpc)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-httpc 是一个支持链式调用的 Go HTTP 客户端库，提供请求构建、表单与文件传输、Cookie 管理、客户端配置及请求调试。
+httpc 是基于 Go 标准库的链式 HTTP 客户端，支持请求构建、表单与文件传输、Cookie 管理、Transport 扩展和发送阶段调试，无第三方依赖。
 
-## 安装
-
-需要 **Go 1.27 或更新版本**。本文对应主分支，安装包含下述接口的开发版本：
+需要 **Go 1.27 或更新版本**。本文对应主分支：
 
 ```sh
 go get github.com/Albert-Zhan/httpc@master
 ```
 
-[完整 API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc) · [发布版本](https://github.com/Albert-Zhan/httpc/releases)
+[API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc) · [发布版本](https://github.com/Albert-Zhan/httpc/releases) · [开发与发布规范](CONTRIBUTING.md)
 
 ## 快速开始
 
@@ -40,9 +38,7 @@ func main() {
 	client := httpc.NewClient()
 	defer client.CloseIdleConnections()
 
-	resp, text, err := httpc.NewRequest(client).
-		SetURL(server.URL).
-		Send().End()
+	resp, text, err := httpc.NewRequest(client).SetURL(server.URL).Send().End()
 	if err != nil {
 		fmt.Println(err)
 		return
@@ -52,21 +48,18 @@ func main() {
 }
 ```
 
-先通过 `Send()` 发送请求，再选择一种 `End` 方法读取结果。以下代码片段放在 `main` 函数内独立使用，默认已创建 `client := httpc.NewClient()`；按需导入标准库包及 `github.com/Albert-Zhan/httpc/body`，并替换示例地址和文件路径。
+配置完成后的 `Client` 可以并发复用。每次请求创建独立的 `Request` 和可变请求体；每个 Request 只发送一次、读取一次响应，重试时创建新对象。
 
-每个 `Request` 只允许调用一次 `Send()`，发送失败后重试也应创建新对象。重复发送返回 `ErrInvalidRequest`，并关闭尚未读取的响应体。
+以下代码片段默认在 `main` 函数内独立使用，已创建 `client := httpc.NewClient()`；按需导入标准库及 `github.com/Albert-Zhan/httpc/body`，替换地址和文件路径。Transport 包装器的类型与方法定义放在 `main` 外。
 
 ## 构建请求
 
 ```go
 resp, text, err := httpc.NewRequest(client).
 	SetURL("https://example.com/search?source=web").
-	SetParam("q", "go").
-	SetParam("tag", "http").
-	SetParam("tag", "client").
+	SetParam("q", "go").SetParam("tag", "http").SetParam("tag", "client").
 	SetHeader("Accept", "application/json").
-	AddHeader("X-Tag", "one").
-	AddHeader("x-tag", "two").
+	AddHeader("X-Tag", "one").AddHeader("x-tag", "two").
 	Send().End()
 if err != nil {
 	fmt.Println(err)
@@ -75,24 +68,25 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-- 默认方法为 GET；通过 `SetMethod("post")` 等设置其他方法，方法名不区分大小写。
-- `SetParam` 合并 URL 查询参数，同名参数保留多个值。请求正文通过 `SetBody` 设置。
-- 请求头名称不区分大小写。`SetHeader` 替换同名头的全部值，`AddHeader` 追加值。
-- 未设置 `User-Agent` 时，自动使用 `httpc/` 加 `httpc.Version`，HTTP/1.1 和 HTTP/2 使用相同值。当前主分支版本为 `1.5.1-dev`；自定义 UA 优先，`SetHeader("User-Agent", "")` 可禁止发送 UA。
-- `SetBasicAuth("username", "password")` 设置 Basic Auth，应通过 HTTPS 使用。它与手动设置 `Authorization` 遵循后一次设置生效的规则。
+| 设置 | 行为 |
+| --- | --- |
+| `SetMethod(name)` | 默认 GET，方法名不区分大小写 |
+| `SetParam(name, value)` | 合并 URL 查询参数，同名参数追加多个值 |
+| `SetHeader(name, value)` | 替换同名头的全部值，名称不区分大小写 |
+| `AddHeader(name, value)` | 追加同名头的一个值 |
+| `SetBasicAuth(user, password)` | 设置 Basic Auth，与手动 Authorization 以后一次设置为准 |
+| `SetBody(data)` | 设置正文，自动采用其 Content-Type；手动设置的 Content-Type 优先 |
+
+未设置 User-Agent 时使用 `httpc/` 加 `httpc.Version`，即 `httpc.DefaultUserAgent`；HTTP/1.1 和 HTTP/2 一致。自定义值优先，`SetHeader("User-Agent", "")` 可禁止发送该头。
 
 ## 请求体与上传
 
 ### URL 编码表单
 
 ```go
-data := body.NewURLEncode().
-	SetData("name", "httpc").
-	SetData("language", "go")
-
+data := body.NewURLEncode().SetData("name", "httpc").SetData("tag", "one").SetData("tag", "two")
 resp, text, err := httpc.NewRequest(client).
-	SetMethod("post").SetURL("https://example.com/form").
-	SetBody(data).Send().End()
+	SetMethod("POST").SetURL("https://example.com/form").SetBody(data).Send().End()
 if err != nil {
 	fmt.Println(err)
 	return
@@ -100,17 +94,15 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-同名字段可多次添加，编码类型为 `application/x-www-form-urlencoded`。
+类型为 `application/x-www-form-urlencoded`，同名字段保留多个值。
 
-### JSON 与原始正文
+### 文本、JSON 与二进制
 
 ```go
 data := body.NewRawData()
 data.SetData(`{"name":"httpc"}`, body.JSON)
-
 resp, text, err := httpc.NewRequest(client).
-	SetMethod("post").SetURL("https://example.com/items").
-	SetBody(data).Send().End()
+	SetMethod("POST").SetURL("https://example.com/items").SetBody(data).Send().End()
 if err != nil {
 	fmt.Println(err)
 	return
@@ -118,22 +110,16 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-`Raw.SetData` 接受 `string`、`[]byte` 或 nil，以及正文的 MIME 类型；nil 表示空正文，`SetData("", "")` 也合法。字节切片会被复制，后续修改原切片不会改变请求内容。可使用 `body.JSON`、`body.Text`、`body.HTML`、`body.XML`、`body.JavaScript`、`body.Protobuf` 或自定义类型。
+`Raw.SetData(data, format)` 接受 `string`、`[]byte` 或 nil；nil 表示空正文，`SetData("", "")` 也合法。字节切片保存为副本，后续修改输入不会改变正文。每次调用替换此前内容与错误状态；不支持的类型通过 `data.Err()` 返回 `ErrRequestBody`，并阻止发送。
 
-protobuf 等二进制数据应先由调用方编码，再通过 `SetData(payload, body.Protobuf)` 设置；`body.Protobuf` 的值为 `application/x-protobuf`。JSON 也需先编码，Raw 不会自动序列化对象。不支持的输入类型通过 `data.Err()` 报告 `ErrRequestBody`，`Send()` 会停止发送；后续调用 `SetData` 会替换正文和错误状态。
+Raw 不会自动序列化对象。JSON、protobuf 等数据需先编码，再传入字符串或字节切片。可使用 `body.Text`、`body.JSON`、`body.JavaScript`、`body.HTML`、`body.XML` 或自定义 MIME 类型；protobuf 编码结果可配合 `body.Protobuf`，其值为 `application/x-protobuf`。
 
-`SetBody` 根据请求体设置 `Content-Type`；手动设置的 `Content-Type` 优先。
-
-### multipart 表单与文件上传
+### multipart 文件上传
 
 ```go
-data := body.NewFormData().
-	SetData("name", "httpc").
-	SetFile("file", "./image.png")
-
+data := body.NewFormData().SetData("name", "httpc").SetFile("file", "./image.png")
 resp, text, err := httpc.NewRequest(client).
-	SetMethod("post").SetURL("https://example.com/upload").
-	SetBody(data).Send().End()
+	SetMethod("POST").SetURL("https://example.com/upload").SetBody(data).Send().End()
 if err != nil {
 	fmt.Println(err)
 	return
@@ -141,29 +127,47 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-文件需提前存在。表单保留构建或编码时遇到的第一个错误，可通过 `data.Err()` 提前检查；`Send()` 也会自动检查，失败时停止发送。`Form.Encode()` 会结束表单构建，此后不能再添加字段或文件。
+文件须提前存在。可在添加内容前用 `SetBoundary` 指定边界。Form 保留构建或编码时的第一个错误，可通过 `data.Err()` 检查，`Send()` 也会检查并阻止发送；`Encode()` 完成构建后不能再添加字段或文件。
 
-### 自定义请求体
+自定义正文只需实现 `body.Body` 的两个方法：`GetContentType() string`、`Encode() io.Reader`。可额外实现 `Err() error`，httpc 会在编码前后检查它。
 
-`SetBody` 接受 `body.Body`，自定义实现提供 `GetContentType() string` 和 `Encode() io.Reader` 即可。还可以提供可选的 `Err() error`，发送时会在编码前后检查它。
+## 读取响应
 
-## 读取响应与下载
+调用 `Send()` 后选择一种读取方法，所有方法都会在结束或失败时关闭响应体：
 
 | 方法 | 返回值 | 用途 |
 | --- | --- | --- |
 | `End()` | `(*http.Response, string, error)` | 读取文本 |
 | `EndByte()` | `(*http.Response, []byte, error)` | 读取字节 |
-| `EndTo(writer)` | `(*http.Response, error)` | 流式写入任意 `io.Writer` |
-| `EndFile(dir, name)` | `(*http.Response, error)` | 保存文件 |
+| `EndTo(writer)` | `(*http.Response, error)` | 流式写入 `io.Writer` |
+| `EndFile(dir, name)` | `(*http.Response, error)` | 下载文件，仅接受 200 OK |
 
-每次请求选择一种读取方式，读取结束或失败后关闭响应体。成功读取后再次读取返回 `ErrInvalidRequest`；已有发送或读取错误时保留原错误，不再读取。所有读取方法均支持 gzip 解码，包括显式设置 `Accept-Encoding: gzip` 的情况；响应头、状态码及响应 Cookie 可从返回的 `resp` 获取。
+`End`、`EndByte` 和 `EndTo` 不把 4xx/5xx 视为操作错误。`err == nil` 表示发送及读取完成，业务上是否成功还需判断 `resp.StatusCode`。响应头及响应 Cookie 也从 `resp` 获取。
 
-`End`、`EndByte` 和 `EndTo` 不把 4xx/5xx 状态码视为错误，调用方应检查 `resp.StatusCode`。`EndFile` 要求响应状态为 `200 OK`：
+### 流式输出与大小限制
+
+`EndTo` 不在库内缓存完整正文，可写入文件、哈希计算器、`io.MultiWriter` 或自定义 Writer。Writer 由调用方管理，httpc 不会关闭它：
+
+```go
+hash := sha256.New()
+resp, err := httpc.NewRequest(client).
+	SetURL("https://example.com/data").SetResponseLimit(8 << 20).Send().EndTo(hash)
+if err != nil {
+	fmt.Println(err)
+	return
+}
+fmt.Printf("status=%d sha256=%x\n", resp.StatusCode, hash.Sum(nil))
+```
+
+`SetResponseLimit(n)` 限制所有 End 方法读取的正文字节数，按 gzip 解压后的大小计数，不依赖 Content-Length。默认不限制，0 或负值取消限制；恰好等于上限时成功，超过时返回 `ErrResponseTooLarge`，写入不会超过上限。自行读取 `GetResponse().Body` 时需自行限制大小并关闭。
+
+失败时，`End`、`EndByte` 不返回部分正文；Writer 或文件可能保留已写入内容，调用方根据错误决定是否使用或清理。Writer 写入失败返回 `ErrWriteResponse`，原始错误链保留。
+
+### 下载文件
 
 ```go
 resp, err := httpc.NewRequest(client).
-	SetURL("https://example.com/archive.zip").
-	Send().EndFile("./downloads", "archive.zip")
+	SetURL("https://example.com/archive.zip").Send().EndFile("./downloads", "archive.zip")
 if err != nil {
 	fmt.Println(err)
 	return
@@ -171,42 +175,19 @@ if err != nil {
 fmt.Println(resp.StatusCode)
 ```
 
-保存目录必须已存在，目标文件存在时会被覆盖。文件名为空时从请求 URL 获取。
+目录须已存在，目标文件存在时会被覆盖；文件名为空时从请求 URL 获取。下载收到非 200 状态码返回 `ErrHTTPStatus`；文件创建、写入、关闭，以及下载中的读取或超限错误可匹配 `ErrSaveFile`。
 
-`EndTo` 逐块写入 Writer，不在库内缓存完整正文。可以传入文件、哈希计算器、`io.MultiWriter` 或自定义 Writer；Writer 由调用方管理，httpc 不会关闭它：
+所有 End 方法支持单一的 `Content-Encoding: gzip`，包括显式请求 gzip 的情况；返回的响应头保留 Transport 提供的值。仅有 `application/gzip` MIME 类型或 `.gz` 文件名不会触发解包，其他编码或编码组合按原始正文读取。gzip 头配空正文按空正文处理并保留状态码；非空数据截断、损坏或校验失败仍返回 `ErrDecodeResponse`。
 
-```go
-var output bytes.Buffer
-resp, err := httpc.NewRequest(client).
-	SetURL("https://example.com/data").
-	SetResponseLimit(8 << 20).
-	Send().EndTo(&output)
-if err != nil {
-	if errors.Is(err, httpc.ErrResponseTooLarge) {
-		fmt.Println("响应正文超过 8 MiB")
-	}
-	return
-}
-fmt.Println(resp.StatusCode, output.Len())
-```
-
-`SetResponseLimit(n)` 在读取前设置正文大小上限，单位为字节；默认不限制，0 或负值取消限制。它覆盖全部 End 系列读取方法，按 gzip 解压后的字节数计数，不依赖 `Content-Length`；恰好等于上限时成功，超过时返回 `ErrResponseTooLarge`。直接读取 `GetResponse().Body` 时由调用方自行控制大小和关闭。
-
-失败时，`End` 和 `EndByte` 不返回部分正文；Writer 或文件可能保留已写入内容，调用方应根据错误决定是否使用或清理。超限时写入不超过上限，读取端最多额外探测一个解码后字节。Writer 失败返回 `ErrWriteResponse`，保留原始错误链；下载中的超限、读取或写入错误同时匹配 `ErrSaveFile`。
-
-gzip 解码识别单一的 `Content-Encoding: gzip`，不修改返回响应头。仅有 `Content-Type: application/gzip` 或 `.gz` 文件名不会触发解码；其他编码或编码组合按原始正文读取。
-
-带 gzip 头但实际没有正文的响应按空正文处理，保留原状态码；例如 `End()` 读取 400 空响应时返回状态码 400、空字符串和 nil 错误。非空 gzip 数据的截断、损坏及校验失败仍返回 `ErrDecodeResponse`；`EndFile` 仍要求 200 OK。
+未发送就读取、重复发送、成功读取后再次读取均返回 `ErrInvalidRequest`。重复发送会关闭未读取的响应体；已有发送或读取错误时，后续读取保留原错误，不再访问正文。
 
 ## Cookie 管理
 
-### 当前请求的 Cookie
-
 ```go
+client.SetCookieJar(httpc.NewCookieJar())
 cookies := []*http.Cookie{{Name: "session", Value: "example"}}
 resp, text, err := httpc.NewRequest(client).
-	SetURL("https://example.com/profile").
-	SetCookieList(cookies).Send().End()
+	SetURL("https://example.com/profile").SetCookieList(cookies).Send().End()
 if err != nil {
 	fmt.Println(err)
 	return
@@ -214,44 +195,18 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-`SetCookieList` 替换此前设置的列表，保存时复制切片；传入 nil 或空切片可清除该列表。列表中的元素不能为 nil，否则发送时返回 `ErrInvalidRequest`。Cookie 对象本身仍被共享，发送期间不要修改。手动设置的 `Cookie` 请求头会与列表中的 Cookie 一起发送。
+自动 Cookie 管理默认关闭。`SetCookieJar` 可接收标准库或其他 `http.CookieJar` 实现，`httpc.NewCookieJar()` 是创建标准库 Jar 的便捷入口；设为 nil 可禁用。配置后，共享客户端的请求会自动保存响应 Cookie，并发送与 URL 匹配的 Cookie。
 
-### 自动管理 Cookie
-
-默认不开启自动 Cookie 管理。配置标准库 Jar 后，共享该客户端的请求会自动保存响应 Cookie，并发送与 URL 匹配的 Cookie：
-
-```go
-jar, err := cookiejar.New(nil)
-if err != nil {
-	fmt.Println(err)
-	return
-}
-client.SetCookieJar(jar)
-
-resp, text, err := httpc.NewRequest(client).
-	SetURL("https://example.com/login").Send().End()
-if err != nil {
-	fmt.Println(err)
-	return
-}
-fmt.Println(resp.StatusCode, text)
-```
-
-此例需导入 `net/http/cookiejar`。也可以使用 `client.SetCookieJar(httpc.NewCookieJar())`，或传入其他 `http.CookieJar` 实现。`SetCookieJar(nil)` 禁用自动管理。
+`SetCookieList` 设置当前请求的 Cookie，复制切片但共享 Cookie 对象；nil 或空列表可清除列表，列表元素不能为 nil。手动 Cookie 头与列表一起发送；发送期间不要修改共享的 Cookie 对象。
 
 ## 客户端配置
 
 ```go
-client := httpc.NewClient().SetTimeout(10 * time.Second)
-client.SetProxy("http://127.0.0.1:10809")
-
-// 保留 3xx 响应，停止自动跟随重定向。
+client := httpc.NewClient().SetTimeout(10 * time.Second).SetProxy("http://127.0.0.1:10809")
 client.SetRedirect(func(req *http.Request, via []*http.Request) error {
-	return http.ErrUseLastResponse
+	return http.ErrUseLastResponse // 保留 3xx 响应
 })
-
 client.CustomizeTransport(func(tr *http.Transport) {
-	tr.MaxIdleConns = 100
 	tr.MaxIdleConnsPerHost = 10
 	tr.ResponseHeaderTimeout = 5 * time.Second
 })
@@ -259,27 +214,45 @@ client.CustomizeTransport(func(tr *http.Transport) {
 
 | 默认配置 | 值 |
 | --- | --- |
-| 客户端总超时 | 30 秒 |
-| 建立连接超时 | 30 秒 |
-| 响应头超时 | 15 秒 |
-| TLS 握手超时 | 10 秒 |
+| 客户端总超时 / 建立连接超时 | 30 秒 / 30 秒 |
+| 响应头超时 / TLS 握手超时 | 15 秒 / 10 秒 |
 | 空闲连接回收时间 | 90 秒 |
+| 总空闲连接 / 每主机空闲连接 / 每主机连接上限 | 200 / 50 / 100 |
 | TLS | 验证证书，最低 TLS 1.2 |
 | HTTP/2 | 支持 HTTPS 协商 |
 | 代理 | 直连 |
 
-`SetTimeout(0)` 取消客户端总超时，Transport 的各项超时仍生效。`SetSkipVerify(true)` 可跳过 TLS 证书验证，仅用于受控测试环境。
+`SetTimeout(0)` 禁用客户端总超时，Transport 的独立超时仍生效。`SetSkipVerify(true)` 跳过服务端证书验证，适用于受控测试。
 
-代理地址支持 `http`、`https`、`socks5`、`socks5h`，需包含协议和主机，端口范围为 1–65535。非法配置会在发送时返回错误；设置合法代理或调用 `ClearProxy()` 可恢复请求。
+代理支持 `http`、`https`、`socks5`、`socks5h`，需包含协议和主机，显式端口范围为 1–65535。非法配置返回错误并阻止使用该内置 Transport 发送；设置合法代理或 `ClearProxy()` 可恢复。
 
-### Transport 扩展
-
-`WrapTransport` 包装当前发送链，可以接入签名、监控、限流或测试替身。先在 `main` 函数外定义包装器：
+### context 与连接复用
 
 ```go
-type headerTransport struct {
-	Next http.RoundTripper
+ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
+	GotConn: func(info httptrace.GotConnInfo) { fmt.Println("connection reused:", info.Reused) },
+})
+ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+defer cancel()
+
+resp, text, err := httpc.NewRequest(client).SetURL("https://example.com/api").Send(ctx).End()
+if err != nil {
+	fmt.Println(err)
+	return
 }
+fmt.Println(resp.StatusCode, text)
+```
+
+此例使用 `net/http/httptrace`。`Send(ctx)` 保留调用方的 context 和 Trace，省略时使用 `context.Background()`；与客户端超时以先到者为准。开启库的调试也不会覆盖调用方已有回调。
+
+发送前完成客户端配置，使用期间不要修改配置或复制 Client。`CloseIdleConnections()` 可与请求并发调用，用于释放空闲连接，不中断活跃请求，也不禁止后续请求。
+
+## Transport 扩展
+
+在 `main` 外定义包装器，修改请求时克隆并保留原 context：
+
+```go
+type headerTransport struct{ Next http.RoundTripper }
 
 func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	changed := req.Clone(req.Context())
@@ -288,7 +261,7 @@ func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 ```
 
-创建客户端后、发送请求前注册：
+发送前注册，包装器供所有请求共享，内部状态需并发安全：
 
 ```go
 client.WrapTransport(func(next http.RoundTripper) http.RoundTripper {
@@ -296,61 +269,34 @@ client.WrapTransport(func(next http.RoundTripper) http.RoundTripper {
 })
 ```
 
-- 后注册的包装器在外层：先注册 A、再注册 B，发送顺序为 B、A、内置 Transport，返回顺序相反。
-- 包装器在配置时创建一次并供所有请求共享，内部状态需保证并发安全。修改请求时应克隆，并保留原 context，以保留取消、超时及追踪信息；不要提前消耗正文。替换正文时由包装器负责原正文的关闭、新正文的长度和重放能力。
-- `CustomizeTransport`、`SetProxy`、`SetSkipVerify` 继续配置内置 Transport。返回独立的 Transport 可接管发送，但其代理、TLS、连接池等由调用方配置；不委托 `next` 时不会自动使用内置 Transport 的配置。
-- `CloseIdleConnections()` 逐层调用已注册 Transport 的同名方法，并关闭内置连接池；中间层没有该方法也不会阻断后续层。向传入的 `next` 同步转发关闭时，不会重复关闭该注册层。外部实现若持有额外连接池，应提供 `CloseIdleConnections()` 并在其中处理这些资源；库不会调用可能中断活跃请求的 `Close()`。
-- 传入 nil 包装器、返回 nil 或带类型的 nil，都会使后续 `Send` 返回 `ErrInvalidRequest`；之前有效的发送链保留，后续合法 `WrapTransport` 调用可恢复。
+后注册的包装器在外层：先 A、后 B，发送顺序为 B、A、原发送链，返回顺序相反。不要提前消耗实际正文；替换正文时，包装器负责原正文的关闭、新正文的长度和重放能力。
 
-调试仍通过 `SetDebug(true)` 开启，注册扩展不会覆盖日志入口。包装器把修改后的请求传给 `next` 时，日志使用该请求的 URL、请求头和正文预览；直接返回新的标准 `*http.Transport` 也支持发送阶段采集。实际头信息依赖底层 `httptrace` 事件：自定义实现不提供事件或丢弃原 context 时，只能输出明确标注的请求快照，不能保证捕获其真实发送内容。默认不脱敏及按指定 key 脱敏的规则不变。
+`CustomizeTransport`、`SetProxy`、`SetSkipVerify` 配置的是内置 Transport。通过 `next` 委托发送时继续使用这些配置；返回独立 Transport 接管发送时，其代理、TLS、连接池由调用方配置。外层客户端的超时、CookieJar 和重定向策略继续保留，自定义实现需遵守请求 context。
 
-### context 超时与取消
+`CloseIdleConnections()` 逐层调用已注册 Transport 的同名方法，缺少该方法的中间层不会阻断后续层，并兜底关闭内置连接池。向传入的 `next` 同步转发关闭不会重复关闭该注册层。外部自有连接池需通过同名方法释放，库不会调用 `Close()`。
 
-```go
-ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-defer cancel()
-
-resp, text, err := httpc.NewRequest(client).
-	SetURL("https://example.com/api").Send(ctx).End()
-if err != nil {
-	fmt.Println(err)
-	return
-}
-fmt.Println(resp.StatusCode, text)
-```
-
-`Send()` 默认使用 `context.Background()`；`Send(ctx)` 使用传入的 context。context 与客户端超时以先到者为准。
-
-### 复用与连接管理
-
-配置完成后的 `Client` 可以并发复用，但不要复制客户端或在发送期间修改配置。每次请求创建独立的 `Request` 和可变请求体，避免在多个 goroutine 之间共享构建器。
-
-调用 `client.CloseIdleConnections()` 可释放当前空闲连接，不中断正在进行的请求，之后仍可继续使用客户端。该方法可与请求并发调用。
+nil 包装器或 nil 返回值（包括带类型的 nil）会使 `Send` 返回 `ErrInvalidRequest`；原有效链保留，后续合法 `WrapTransport` 调用可恢复。
 
 ## 调试日志
 
-调试默认关闭。通过请求的 `SetDebug(true)` 开启后，默认输出到 `os.Stdout`，**默认不脱敏**。可指定输出位置和需要脱敏的字段：
+调试默认关闭。请求上调用 `SetDebug(true)` 后，默认输出到 `os.Stdout`，**默认不脱敏**：
 
 ```go
-client.SetDebugOutput(os.Stderr).
-	AddDebugSensitiveFields("Authorization", "Cookie", "password", "token")
-
+client.SetDebugOutput(os.Stderr).AddDebugSensitiveFields("Authorization", "Cookie", "password", "token")
 _, _, err := httpc.NewRequest(client).
-	SetURL("https://example.com/api").SetDebug(true).Send().End()
+	SetURL("https://example.com/profile?token=demo").
+	SetCookieList([]*http.Cookie{{Name: "session", Value: "example"}}).SetDebug(true).Send().End()
 if err != nil {
 	fmt.Println(err)
 }
 ```
 
-- 脱敏仅作用于显式指定的 key，忽略大小写和分隔符；`token` 不会匹配 `access_token`。可多次调用以追加字段。
-- 规则覆盖请求头、查询参数、JSON 和表单字段；JSON 按字段递归处理。指定 `Cookie` 隐藏全部 Cookie 值，指定 Cookie 名称则只隐藏该项。
-- `Referer` 等 URL 字段中的用户名、密码、完整用户凭据和 fragment 分别使用 `username`、`password`、`userinfo`、`fragment` 指定；`filename` 用于 multipart 文件名。
-- 请求头在 Transport 写出阶段采集，包含自动添加的 Cookie、gzip、Host、正文长度和传输编码；HTTP/2 展示实际逻辑头字段及伪头。
-- 同一次 `Send()` 使用相同的 `Request-ID`；`Hop` 区分重定向的各跳，`Attempt` 区分该跳内的连接及发送尝试。底层重试由标准库决定，日志不额外重试请求。
-- 请求 URL 不包含不会随请求目标发送的用户凭据和 fragment；URL 凭据产生的 Authorization 按请求头规则展示或脱敏。HTTP/2 的 `:path` 同样过滤查询参数，指定 `Host` 也会过滤 `:authority`。
-- `Body-Preview` 只预览不超过 64 KiB 的可重放正文副本，不读取实际待发送的正文。过大、不可重放或二进制正文会省略；multipart 展示字段及文件名，不输出文件内容。启用字段脱敏后，无法解析或不支持过滤的正文会省略。
+- 只匹配显式指定的 key，忽略大小写和分隔符，`token` 不匹配 `access_token`。可多次调用追加规则。
+- 规则覆盖请求头、查询参数、JSON（递归）和表单字段。`Cookie` 隐藏所有 Cookie 值，指定 Cookie 名称只隐藏对应项；`filename` 用于 multipart 文件名。
+- `Referer` 等 URL 字段可用 `username`、`password`、`userinfo`、`fragment` 控制对应部分。HTTP/2 的 `:path` 同样过滤查询参数，指定 `Host` 也会过滤 `:authority`。
+- 正文仅预览不超过 64 KiB 的可重放副本；过大、不可重放或非 UTF-8 正文省略。multipart 只展示字段和文件名。启用脱敏后，无法解析或不支持字段过滤的正文省略。
 
-例如，配置上述字段后，一次登录请求的日志可显示为：
+一次 HTTP/1.1 请求的日志示例：
 
 ```text
 [httpc Debug]
@@ -358,75 +304,62 @@ if err != nil {
 Request-ID: 12
 Hop: 1
 Attempt: 1
-Request: POST https://example.com/login?token=%5BREDACTED%5D
+Request: GET https://example.com/profile?token=%5BREDACTED%5D
 Protocol: HTTP/1.1
 Header-Source: transport
-Header: {"Accept-Encoding":["gzip"],"Authorization":["[REDACTED]"],"Content-Length":["43"],"Content-Type":["application/json"],"Cookie":["[REDACTED]"],"Host":["example.com"],"User-Agent":["httpc/1.5.1-dev"]}
+Header: {"Accept-Encoding":["gzip"],"Cookie":["[REDACTED]"],"Host":["example.com"],"User-Agent":["httpc/1.5.1-dev"]}
 Cookies: {"session":"[REDACTED]"}
-Body-Preview: {"password":"[REDACTED]","username":"alice"}
+Body-Preview:
 Write: completed
 -------------------------------------------------------------------
 ```
 
-`[REDACTED]` 在 URL 中按百分号编码显示。脱敏不修改实际请求，也不修改返回的错误内容。
+`Request-ID` 关联同一次 Send，`Hop` 区分重定向，`Attempt` 区分该跳的连接与发送尝试；日志不额外重试请求。请求目标不包含 URL 用户凭据及 fragment，凭据生成的 Authorization 按头字段规则处理。脱敏不改变实际请求或返回错误。
 
-`Header-Source: transport` 表示采集到 Transport 写出的字段，写入失败时可能只有部分字段。没有提供追踪事件的自定义 Transport，或尚未写出头的失败请求，显示 `Header-Source: request snapshot`；快照不代表实际发送内容。
+`Header-Source: transport` 表示采集到写出阶段的头，可包含自动 Cookie、gzip、Host、长度、传输编码及 HTTP/2 伪头；失败时可能只有部分字段。外部包装器经 `next` 传入的改写请求同样可采集。自定义实现不提供追踪事件或丢弃原 context 时，显示 `request snapshot`，快照不代表实际发送内容。
 
 | Write | 含义 |
 | --- | --- |
-| `completed` | 观测到请求写入完成 |
-| `failed` | 观测到请求写入失败 |
+| `completed` / `failed` | 观测到请求写入完成 / 失败 |
 | `not_started` | 获取连接失败，尚未进入请求写入阶段 |
-| `unconfirmed` | 观测到连接或头信息，但返回时尚未确认写入结果 |
-| `unobserved` | 没有获得足以判断发送状态的追踪事件 |
+| `unconfirmed` | 已观测到连接或头信息，但未确认写入结果 |
+| `unobserved` | 没有足够的追踪事件判断发送状态 |
 
-头字段回调发生时数据可能仍在缓冲区；`completed` 也不保证服务端应用已处理请求。正文预览不代表所有字节已发送。日志在每一跳的 Transport 返回时输出，不等待迟到的事件，也不会把它们继续写入已输出记录；调用方原有的 `httptrace` 回调仍然保留。
+头字段可能仍在缓冲区，`completed` 不保证服务端已处理请求；正文预览也不代表所有字节已发送。日志只反映记录时已确认的状态。
 
-日志按完整记录串行写入同一客户端的 Writer；多个客户端共享 Writer 时，调用方需保证其并发安全。Writer 由调用方关闭。`SetDebugOutput(nil)` 或传入 `io.Discard` 可丢弃日志，日志写入失败不影响 HTTP 请求。
+同一客户端按完整记录串行写入，多个客户端共用 Writer 时需由调用方保证并发安全。Writer 由调用方关闭；`SetDebugOutput(nil)` 或 `io.Discard` 丢弃日志，日志写入失败不影响 HTTP 请求。
 
 ## 错误处理
 
-通过 `errors.Is(err, httpc.ErrXXX)` 判断类别，通过 `errors.As` 获取 `*httpc.Error`。错误保留底层原因，同一个错误可能匹配多个类别：
+使用 `errors.Is(err, httpc.ErrXXX)` 判断类别，`errors.As` 获取 `*httpc.Error`；底层原因保留在错误链中：
 
 ```go
-data := body.NewFormData().SetFile("file", "./image.png")
-_, _, err := httpc.NewRequest(client).
-	SetMethod("post").SetURL("https://example.com/upload").
-	SetBody(data).Send().End()
+_, _, err := httpc.NewRequest(client).SetURL("https://example.com/api").SetResponseLimit(8 << 20).Send().End()
 if err != nil {
-	if errors.Is(err, httpc.ErrUploadFile) {
-		fmt.Println("上传文件处理失败")
-	}
-	if errors.Is(err, os.ErrNotExist) {
-		fmt.Println("文件不存在")
+	if errors.Is(err, httpc.ErrResponseTooLarge) {
+		fmt.Println("响应正文过大")
 	}
 	var detail *httpc.Error
 	if errors.As(err, &detail) {
 		fmt.Println(detail.Op, detail.Kind)
 	}
+	return
 }
 ```
 
-| 错误类别 | 含义 |
+| 类别 | 含义 |
 | --- | --- |
-| `ErrInvalidRequest` | URL、参数、方法、Transport 包装配置或调用状态无效，包括未发送就读取响应 |
+| `ErrInvalidRequest` | URL、参数、方法、Transport 包装配置或调用状态无效 |
 | `ErrInvalidProxy` | 代理地址无效 |
-| `ErrRequestBody` | 请求体构建或编码失败 |
-| `ErrUploadFile` | 上传文件处理失败 |
+| `ErrRequestBody` / `ErrUploadFile` | 正文构建或编码失败 / 上传文件处理失败 |
 | `ErrSendRequest` | 连接、TLS、代理、取消、超时等发送失败 |
-| `ErrReadResponse` | 响应体读取失败 |
-| `ErrWriteResponse` | 响应正文写入 Writer 失败 |
-| `ErrResponseTooLarge` | 解码后的响应正文超过大小限制 |
-| `ErrDecodeResponse` | gzip 响应解析或解压失败 |
-| `ErrSaveFile` | 下载文件创建、写入或关闭失败 |
-| `ErrHTTPStatus` | 下载收到非 200 状态码 |
+| `ErrReadResponse` / `ErrWriteResponse` | 响应读取失败 / Writer 写入失败 |
+| `ErrResponseTooLarge` | 解码后正文超过限制 |
+| `ErrDecodeResponse` | gzip 解析或解压失败 |
+| `ErrSaveFile` / `ErrHTTPStatus` | 下载文件处理失败 / 下载收到非 200 状态码 |
 
-例如，上传文件不存在时可同时匹配 `ErrRequestBody`、`ErrUploadFile` 和 `os.ErrNotExist`。`GetResponse()`、`GetError()` 可分别获取响应对象与最近一次发送或读取错误。
+同一错误可能匹配多个类别：上传文件不存在可匹配 `ErrRequestBody`、`ErrUploadFile` 和 `os.ErrNotExist`；下载中的超限错误也匹配 `ErrSaveFile`。`GetResponse()` 和 `GetError()` 分别返回响应对象与最近一次发送或读取错误。
 
-## 开发与发布
+## 开发与许可证
 
-本地检查命令、测试规范、CI 和发布流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
-
-## 许可证
-
-[Apache License 2.0](LICENSE)
+测试组织、本地检查和 CI 发布流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。项目使用 [Apache License 2.0](LICENSE)。
