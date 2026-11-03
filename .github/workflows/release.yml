@@ -77,6 +77,12 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Check out release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
       - name: Publish the version in .github/release.json
         env:
           GH_TOKEN: ${{ github.token }}
@@ -89,9 +95,13 @@ jobs:
           import json
           import os
           import re
+          import sys
           from pathlib import Path
           from urllib.error import HTTPError
           from urllib.request import Request, urlopen
+
+          sys.path.insert(0, '.github/scripts')
+          from release_version import validate_release_version
 
           root = f"/repos/{os.environ['GH_REPO']}"
 
@@ -141,6 +151,12 @@ jobs:
                   raise SystemExit('Existing release has no matching tag')
               print(f"Already published: {release['html_url']}")
           else:
+              version_file = api(f'/contents/version.go?ref={target}')
+              version_source = base64.b64decode(version_file['content']).decode('utf-8')
+              try:
+                  validate_release_version(tag, version_source)
+              except ValueError as error:
+                  raise SystemExit(str(error))
               release = api('/releases', {
                   'tag_name': tag,
                   'target_commitish': target,

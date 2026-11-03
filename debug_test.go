@@ -283,12 +283,12 @@ func TestDebugLogFormat(t *testing.T) {
 			want := "[httpc Debug]\n" + strings.Repeat("-", 67) + "\n"
 			if redact {
 				want += "Request: POST https://example.com/login?token=%5BREDACTED%5D\n" +
-					"Header: {\"Authorization\":[\"[REDACTED]\"],\"Content-Type\":[\"application/json\"],\"Cookie\":[\"[REDACTED]\"]}\n" +
+					"Header: {\"Authorization\":[\"[REDACTED]\"],\"Content-Type\":[\"application/json\"],\"Cookie\":[\"[REDACTED]\"],\"User-Agent\":[\"" + DefaultUserAgent + "\"]}\n" +
 					"Cookies: {\"session\":\"[REDACTED]\"}\n" +
 					"Body: {\"password\":\"[REDACTED]\",\"username\":\"alice\"}\n"
 			} else {
 				want += "Request: POST https://example.com/login?token=demo-token\n" +
-					"Header: {\"Authorization\":[\"Bearer demo-auth\"],\"Content-Type\":[\"application/json\"],\"Cookie\":[\"session=demo-session\"]}\n" +
+					"Header: {\"Authorization\":[\"Bearer demo-auth\"],\"Content-Type\":[\"application/json\"],\"Cookie\":[\"session=demo-session\"],\"User-Agent\":[\"" + DefaultUserAgent + "\"]}\n" +
 					"Cookies: {\"session\":\"demo-session\"}\n" +
 					"Body: {\"username\":\"alice\",\"password\":\"demo-pass\"}\n"
 			}

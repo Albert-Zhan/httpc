@@ -16,6 +16,12 @@ go tool cover -func=coverage.out
 
 修复缺陷时添加能复现问题的回归测试；新增公共 API 时覆盖正常行为和关键错误路径。测试优先使用 `httptest`、本地临时文件或自定义 Transport，避免依赖公网服务、真实凭据和固定等待时间。
 
+发布版本校验脚本的测试需要 Python 3：
+
+```sh
+python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
+```
+
 ## 自动检查
 
 向 `master` 推送、提交以 `master` 为目标的 PR，或手动运行 CI，都会调用同一套检查：
@@ -23,6 +29,7 @@ go tool cover -func=coverage.out
 - 在 Linux、Windows、macOS 上安装 `go.mod` 指定 Go 系列的最新补丁版本。
 - 检查已跟踪 Go 文件的 `gofmt` 格式，执行构建、`go vet`、竞态测试与覆盖率统计。
 - 在 Actions 运行摘要中展示总覆盖率，并保留各平台的 `coverage.out` 报告 7 天。
+- Linux 任务同时验证发布版本校验脚本。
 
 覆盖率用于观察测试缺口，目前不设置硬性百分比门槛。CI 不自动修改代码或提交格式化结果。
 
@@ -30,10 +37,10 @@ go tool cover -func=coverage.out
 
 发布通过 `.github/workflows/release.yml` 完成：
 
-1. 将待发布代码提交到 `master`，确认 CI 通过，记录待发布提交的完整 SHA。
+1. 将 `version.go` 中的 `Version` 更新为目标正式版本（不含 `v` 前缀或 `-dev` 后缀），同步 README 安装命令与日志示例。将待发布代码提交到 `master`，确认 CI 通过，记录待发布提交的完整 SHA。
 2. 修改 `.github/release.json`：填写新的 `tag_name`、相同版本的 `name`、更新说明 `body`，并将 `target_commitish` 设置为待发布提交的完整 SHA。版本格式为 `vX.Y.Z`。
 3. 将发布配置提交到 `master`，自动触发发布流程；也可以在 Actions 中手动运行 Publish release。
-4. 流程校验配置与提交历史，然后针对 `target_commitish` 指定的提交，在三个平台执行完整检查。全部通过后才创建正式 Release，并设为 Latest。
+4. 流程校验配置与提交历史，然后针对 `target_commitish` 指定的提交，在三个平台执行完整检查。创建新 Release 前读取该提交的 `version.go`，确认 `tag_name` 等于 `"v" + Version`，开发版本或不一致的版本会阻止发布。通过后创建正式 Release，并设为 Latest。
 5. 确认 Actions 成功、Release 更新说明正确，且版本标签指向预期提交。
 
 发布检查与普通 CI 复用 `.github/workflows/check.yml`。测试的是标签将指向的提交；配置提交本身不必包含在标签中。任一检查失败都会阻止创建 Release。检查任务只有读取权限，只有最后的发布任务拥有仓库内容写入权限。

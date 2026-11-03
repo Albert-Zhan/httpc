@@ -8,10 +8,10 @@ httpc 是一个支持链式调用的 Go HTTP 客户端库，提供请求构建�
 
 ## 安装
 
-需要 **Go 1.27 或更新版本**。在 Go 模块项目中安装：
+需要 **Go 1.27 或更新版本**。本文对应主分支，安装当前开发版本：
 
 ```sh
-go get github.com/Albert-Zhan/httpc@v1.4.0
+go get github.com/Albert-Zhan/httpc@master
 ```
 
 [完整 API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc) · [发布版本](https://github.com/Albert-Zhan/httpc/releases)
@@ -76,6 +76,7 @@ fmt.Println(resp.StatusCode, text)
 - 默认方法为 GET；通过 `SetMethod("post")` 等设置其他方法，方法名不区分大小写。
 - `SetParam` 合并 URL 查询参数，同名参数保留多个值。请求正文通过 `SetBody` 设置。
 - 请求头名称不区分大小写。`SetHeader` 替换同名头的全部值，`AddHeader` 追加值。
+- 未设置 `User-Agent` 时，自动使用 `httpc/` 加 `httpc.Version`，HTTP/1.1 和 HTTP/2 使用相同值。当前主分支版本为 `1.4.1-dev`；自定义 UA 优先，`SetHeader("User-Agent", "")` 可禁止发送 UA。
 - `SetBasicAuth("username", "password")` 设置 Basic Auth，应通过 HTTPS 使用。它与手动设置 `Authorization` 遵循后一次设置生效的规则。
 
 ## 请求体与上传
@@ -290,7 +291,7 @@ if err != nil {
 [httpc Debug]
 -------------------------------------------------------------------
 Request: POST https://example.com/login?token=%5BREDACTED%5D
-Header: {"Authorization":["[REDACTED]"],"Content-Type":["application/json"],"Cookie":["[REDACTED]"]}
+Header: {"Authorization":["[REDACTED]"],"Content-Type":["application/json"],"Cookie":["[REDACTED]"],"User-Agent":["httpc/1.4.1-dev"]}
 Cookies: {"session":"[REDACTED]"}
 Body: {"password":"[REDACTED]","username":"alice"}
 -------------------------------------------------------------------

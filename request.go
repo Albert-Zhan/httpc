@@ -82,6 +82,7 @@ func (r *Request) SetParam(name, value string) *Request {
 }
 
 // SetHeader 设置请求头，覆盖同名头的全部旧值；名称不区分大小写。
+// User-Agent 显式设置为空时禁止发送该头。
 func (r *Request) SetHeader(name, value string) *Request {
 	r.header.Set(name, value)
 	return r
@@ -134,6 +135,7 @@ func (r *Request) SetBody(body body.Body) *Request {
 
 // Send 构建并发送请求，可选传入 context 控制取消和超时。
 // 省略 context 时使用 context.Background()。
+// 未显式设置 User-Agent 时使用 DefaultUserAgent。
 func (r *Request) Send(ctxs ...context.Context) *Request {
 	if r.httpc == nil || r.httpc.client == nil {
 		r.err = wrapError(ErrInvalidRequest, "send request", fmt.Errorf("client is nil"))
@@ -194,6 +196,12 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 	}
 
 	r.request.Header = r.header.Clone()
+	if r.request.Header == nil {
+		r.request.Header = make(http.Header)
+	}
+	if _, explicit := r.request.Header["User-Agent"]; !explicit {
+		r.request.Header.Set("User-Agent", DefaultUserAgent)
+	}
 	if _, explicit := r.request.Header["Content-Type"]; contentType != "" && !explicit {
 		r.request.Header.Set("Content-Type", contentType)
 	}
