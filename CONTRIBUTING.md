@@ -1,5 +1,15 @@
 # 开发与发布
 
+## 分支与模块
+
+| 分支 | 职责 |
+| --- | --- |
+| `master` | 当前稳定 v1.6.0；v2 正式发布前继续保留 v1 模块 |
+| `release/v1` | v1 兼容维护和补丁发布 |
+| `dev/v2` | v2 功能开发，只允许发布 alpha、beta、rc 预发布 |
+
+v2 使用同一仓库的根模块 `github.com/Albert-Zhan/httpc/v2`，可选 tls-client 适配器使用独立子模块。v2 实现与本地双模块开发方式见 [开发分支说明](https://github.com/Albert-Zhan/httpc/blob/dev/v2/CONTRIBUTING.md)。正式就绪后再合入 master，不新建仓库，也不修改旧版本标签。
+
 ## 本地检查
 
 使用 `go.mod` 要求的 Go 版本（当前为 Go 1.27）。提交前在项目根目录执行：
@@ -48,7 +58,7 @@ python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 
 ## 自动检查
 
-向 `master` 推送、提交以 `master` 为目标的 PR，或手动运行 CI，都会调用同一套检查：
+向 `master`、`release/v1`、`dev/v2` 推送，提交以这些分支为目标的 PR，或手动运行 CI，都会调用同一套检查：
 
 - 在 Linux、Windows、macOS 上安装 `go.mod` 指定 Go 系列的最新补丁版本。
 - 检查已跟踪 Go 文件的 `gofmt` 格式，执行构建、`go vet`、竞态测试与覆盖率统计。
@@ -59,14 +69,19 @@ python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 
 ## 发布流程
 
-发布通过 `.github/workflows/release.yml` 完成：
+发布通过 `.github/workflows/release.yml` 完成。v1 补丁在 `release/v1` 准备，v2 开发分支只允许预发布，正式 v2 从 master 发布。
 
-1. 将 `version.go` 中的 `Version` 更新为目标正式版本（不含 `v` 前缀或 `-dev` 后缀），同步 README 安装命令与日志示例。将待发布代码提交到 `master`，确认 CI 通过，记录待发布提交的完整 SHA。
-2. 修改 `.github/release.json`：填写新的 `tag_name`、相同版本的 `name`、更新说明 `body`，并将 `target_commitish` 设置为待发布提交的完整 SHA。版本格式为 `vX.Y.Z`。
-3. 将发布配置提交到 `master`，自动触发发布流程；也可以在 Actions 中手动运行 Publish release。
-4. 流程校验配置与提交历史，然后针对 `target_commitish` 指定的提交，在三个平台执行完整检查。创建新 Release 前读取该提交的 `version.go`，确认 `tag_name` 等于 `"v" + Version`，开发版本或不一致的版本会阻止发布。通过后创建正式 Release，并设为 Latest。
-5. 确认 Actions 成功、Release 更新说明正确，且版本标签指向预期提交。
+1. 更新待发布模块的 `version.go` 的 Version，不带 v 前缀；v1 使用稳定版本如 1.6.1。同步文档并提交，通过 CI 后记录完整 SHA。
+2. 在对应分支修改 `.github/release.json`，填写 `enabled: true`、`module_dir: "."`、`tag_name`、`target_commitish`、`name`、`body`。目标 SHA 必须是配置提交的祖先。
+3. 推送发布配置自动触发，也可手动运行 Publish release。流程校验目标提交的 Version、go.mod 模块路径及标签一致，再对该提交执行三平台检查。
+4. 全部通过后创建 Release。已有标签不可移动；重复运行只核对已有版本，不覆盖更新说明。
 
-发布检查与普通 CI 复用 `.github/workflows/check.yml`。测试的是标签将指向的提交；配置提交本身不必包含在标签中。任一检查失败都会阻止创建 Release。检查任务只有读取权限，只有最后的发布任务拥有仓库内容写入权限。
+v1 标签为 `v1.x.y`，模块路径不加 /v1。核心 v2 标签为 `v2.x.y`，模块路径必须加 /v2。预发布只接受 alpha.N、beta.N、rc.N，不接受 -dev。适配器使用 `adapters/tlsclient/v2.x.y` 标签，须先发布其 go.mod 依赖的核心版本，且通过无 workspace 的检查。
 
-已有标签指向其他提交时，流程会拒绝移动标签。重复运行已成功发布的配置会确认现有版本，不会覆盖 Release；修改已发布代码应使用新版本号。
+预发布自动标记为 Prerelease。适配器与预发布不设为 Latest；核心稳定版本不低于已发布核心稳定版本时才设为 Latest，v2 发布后的 v1 补丁不会取代 Latest。
+
+普通功能提交不创建 Release。开发中的发布配置可设 `enabled: false`；重新启用时填写准确版本和目标提交。检查任务只有读取权限，只有最终发布任务拥有内容写入权限。
+
+```sh
+python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
+```

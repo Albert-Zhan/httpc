@@ -8,6 +8,12 @@ on:
         required: true
         type: string
 
+      release_module:
+        description: Module being released (empty for ordinary CI)
+        required: false
+        default: ""
+        type: string
+
 permissions:
   contents: read
 
@@ -15,7 +21,7 @@ jobs:
   check:
     name: Go / ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -38,7 +44,7 @@ jobs:
         with:
           go-version-file: go.mod
           check-latest: true
-          cache: false # No external modules or go.sum yet.
+          cache: false
 
       - name: Check formatting
         run: |
@@ -48,27 +54,58 @@ jobs:
             exit 1
           fi
 
+      - name: Set up optional adapter workspace
+        if: ${{ hashFiles('adapters/tlsclient/go.mod') != '' }}
+        run: python3 -B .github/scripts/setup_workspace.py
+
       - name: Build
-        run: go build ./...
+        run: |
+          go build ./...
+          if [[ -f adapters/tlsclient/go.mod ]]; then
+            (cd adapters/tlsclient && go build ./...)
+          fi
 
       - name: Test release version validation
         if: ${{ matrix.os == 'ubuntu-latest' && hashFiles('.github/scripts/test_*.py') != '' }}
         run: python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 
       - name: Vet
-        run: go vet ./...
+        run: |
+          go vet ./...
+          if [[ -f adapters/tlsclient/go.mod ]]; then
+            (cd adapters/tlsclient && go vet ./...)
+          fi
 
       - name: Test with race detection and coverage
-        run: go test -race -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out ./...
+        run: |
+          go test -race -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out ./...
+          if [[ -f adapters/tlsclient/go.mod ]]; then
+            (cd adapters/tlsclient && go test -race -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out ./...)
+          fi
+
+      - name: Check adapter against published core
+        if: ${{ inputs.release_module == 'adapters/tlsclient' }}
+        working-directory: adapters/tlsclient
+        env:
+          GOWORK: 'off'
+        run: |
+          go build -mod=readonly ./...
+          go test -mod=readonly -race -count=1 -timeout=5m ./...
 
       - name: Summarize coverage
-        run: go tool cover -func=coverage.out | tail -n 1 >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          go tool cover -func=coverage.out | tail -n 1 >> "$GITHUB_STEP_SUMMARY"
+          if [[ -f adapters/tlsclient/coverage.out ]]; then
+            (cd adapters/tlsclient && go tool cover -func=coverage.out | tail -n 1) >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Upload coverage
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-${{ matrix.os }}
-          path: coverage.out
+          path: |
+            coverage.out
+            adapters/tlsclient/coverage.out
           if-no-files-found: ignore
           retention-days: 7
