@@ -60,7 +60,7 @@ python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 
 向 `master`、`release/v1`、`dev/v2` 推送，提交以这些分支为目标的 PR，或手动运行 CI，都会调用同一套检查：
 
-- 在 Linux、Windows、macOS 上安装 `go.mod` 指定 Go 系列的最新补丁版本。
+- 在 Linux、Windows、macOS 上安装 `go.mod` 指定 Go 系列的最新补丁版本。macOS 固定使用 `macos-26-intel`（x64）；常规 CI 不覆盖 macOS arm64。
 - 检查已跟踪 Go 文件的 `gofmt` 格式，执行构建、`go vet`、竞态测试与覆盖率统计。
 - 在 Actions 运行摘要中展示总覆盖率，并保留各平台的 `coverage.out` 报告 7 天。
 - Linux 任务同时验证发布版本校验脚本。
