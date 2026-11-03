@@ -55,6 +55,12 @@ func (p *progress) set(key, n int64) {
 		p.parts[key] = n
 	}
 }
+
+func (p *progress) complete(key int64) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.parts, key)
+}
 func (p *progress) snapshot() Progress { p.mu.Lock(); defer p.mu.Unlock(); return p.state }
 func (p *progress) close() {
 	if p.done != nil {

@@ -222,7 +222,7 @@ fmt.Println(result.Path, result.Size, result.Mode, result.WorkersUsed)
 
 - 默认用 `Range: bytes=0-0` 和 `Accept-Encoding: identity` 探测；返回 200 时直接复用该响应流式保存。
 - 返回有效 206、已知长度、强 ETag，且文件大于一个分段时，并行请求分段并携带 If-Range。只有 Accept-Ranges 或弱 ETag 时使用单线程。
-- 每个分段检查 Content-Range、总长度和实际字节数。下载期间返回 200、416、编码变化或 ETag 变化时，取消并等待全部 worker，再重新发起一次单线程下载。
+- 每个分段检查 Content-Range、总长度和实际字节数。下载期间返回 200、416、编码变化、最终资源 URL 或 ETag 变化时，取消并等待全部 worker，再重新发起一次单线程下载。
 - 401、403、404 等状态或畸形分段直接失败。不会把完整 200 正文写入某个分段的偏移位置。
 - 单线程支持未知长度和单一 gzip Content-Encoding；普通 `.gz` 文件或 application/gzip 类型不会触发解包。所有路径均流式复制。
 

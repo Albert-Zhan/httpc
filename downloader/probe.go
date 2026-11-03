@@ -12,6 +12,7 @@ type probeResult struct {
 	total    int64
 	etag     string
 	parallel bool
+	finalURL string
 }
 
 func (d *Downloader) probe(ctx context.Context, rawURL string) (*probeResult, error) {
@@ -46,5 +47,9 @@ func (d *Downloader) probe(ctx context.Context, rawURL string) (*probeResult, er
 		return nil, ErrTooLarge
 	}
 	etag := resp.Header.Get("ETag")
-	return &probeResult{total: total, etag: etag, parallel: total > 0 && strongETag(etag)}, nil
+	finalURL := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	return &probeResult{total: total, etag: etag, parallel: total > 0 && strongETag(etag), finalURL: finalURL}, nil
 }

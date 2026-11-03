@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-var contentRangePattern = regexp.MustCompile(`^bytes ([0-9]+)-([0-9]+)/([0-9]+|\*)$`)
+var contentRangePattern = regexp.MustCompile(`^(?i:bytes) ([0-9]+)-([0-9]+)/([0-9]+|\*)$`)
 
 func strongETag(value string) bool {
 	if len(value) < 2 || value[0] != '"' || value[len(value)-1] != '"' {

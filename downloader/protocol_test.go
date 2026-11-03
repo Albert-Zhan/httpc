@@ -158,6 +158,49 @@ type cancelBody struct {
 	close func()
 }
 
+func TestRedirectedResourceChangeRestartsSingle(t *testing.T) {
+	var chunks atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			target := "/version-a"
+			if r.Header.Get("If-Range") != "" || chunks.Load() > 0 {
+				target = "/version-b"
+			}
+			http.Redirect(w, r, target, 307)
+			return
+		}
+		content := []byte("aaaaaaaaaaaaaaaa")
+		if r.URL.Path == "/version-b" {
+			content = []byte("bbbbbbbbbbbbbbbb")
+		}
+		if r.Header.Get("Range") == "" {
+			_, _ = w.Write(content)
+			return
+		}
+		if r.Header.Get("If-Range") != "" {
+			chunks.Add(1)
+		}
+		var start, end int
+		_, _ = fmt.Sscanf(r.Header.Get("Range"), "bytes=%d-%d", &start, &end)
+		// ETag 的值可在不同资源中重复，不能只凭同名 ETag 拼接。
+		w.Header().Set("ETag", `"same-value"`)
+		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/16", start, end))
+		w.WriteHeader(206)
+		_, _ = w.Write(content[start : end+1])
+	}))
+	defer server.Close()
+	d, _ := downloader.New(server.Client(), downloader.Options{Workers: 2, ChunkSize: 8})
+	path := filepath.Join(t.TempDir(), "data")
+	result, err := d.Download(context.Background(), server.URL, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := os.ReadFile(path)
+	if result.Mode != "single" || string(got) != "bbbbbbbbbbbbbbbb" {
+		t.Fatal(result, string(got))
+	}
+}
+
 func (b *cancelBody) Close() error { b.close(); return nil }
 
 type waitingBody struct {

@@ -39,6 +39,9 @@ func (d *Downloader) parallel(ctx context.Context, rawURL string, f *os.File, pr
 				}
 				p.active(1)
 				err := d.chunk(workerCtx, rawURL, f, job, probe, p)
+				if err == nil {
+					p.complete(job.start)
+				}
 				p.active(-1)
 				if err != nil {
 					failures <- err
@@ -112,6 +115,9 @@ func (d *Downloader) chunkOnce(ctx context.Context, rawURL string, f *os.File, j
 		return fmt.Errorf("%w: chunk returned %s", ErrHTTPStatus, resp.Status)
 	}
 	if !identity(resp) {
+		return errRestartSingle
+	}
+	if probe.finalURL != "" && (resp.Request == nil || resp.Request.URL == nil || resp.Request.URL.String() != probe.finalURL) {
 		return errRestartSingle
 	}
 	start, end, total, err := contentRange(resp.Header.Get("Content-Range"))
