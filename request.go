@@ -19,17 +19,19 @@ import (
 
 // Request 构建、发送并读取一次 HTTP 请求，不支持并发共享。
 type Request struct {
-	httpc    *Client
-	request  *http.Request
-	response *http.Response
-	method   string
-	url      string
-	param    url.Values
-	header   http.Header
-	cookies  []*http.Cookie
-	data     body.Body
-	debug    bool
-	err      error
+	httpc        *Client
+	request      *http.Request
+	response     *http.Response
+	method       string
+	url          string
+	param        url.Values
+	header       http.Header
+	cookies      []*http.Cookie
+	data         body.Body
+	debug        bool
+	err          error
+	sendCalled   bool
+	responseRead bool
 
 	// 保留切片变量的引用，使发送前的重赋值和追加仍然生效。
 	legacyCookies *[]*http.Cookie
@@ -103,6 +105,7 @@ func (r *Request) SetBasicAuth(username, password string) *Request {
 
 // SetCookieList 替换 Cookie 列表，复制切片但共享 Cookie 对象。
 // nil 或空列表可清除列表，与 SetCookies 混用时后一次设置生效。
+// 列表含 nil 元素时，Send 返回 ErrInvalidRequest。
 // 发送期间不要修改 Cookie 对象。
 func (r *Request) SetCookieList(cookies []*http.Cookie) *Request {
 	r.cookies = slices.Clone(cookies)
@@ -112,6 +115,7 @@ func (r *Request) SetCookieList(cookies []*http.Cookie) *Request {
 
 // SetCookies 设置请求的 Cookie 列表，保留对调用方切片变量的引用。
 // 调用后、Send 前对该变量的赋值或追加仍会影响请求；nil 可清除列表。
+// 列表含 nil 元素时，Send 返回 ErrInvalidRequest。
 //
 // Deprecated: 请使用 SetCookieList。此方法在 v1.x 中保留，可能在未来主版本中移除。
 func (r *Request) SetCookies(cookies *[]*http.Cookie) *Request {
@@ -136,7 +140,17 @@ func (r *Request) SetBody(body body.Body) *Request {
 // Send 构建并发送请求，可选传入 context 控制取消和超时。
 // 省略 context 时使用 context.Background()。
 // 未显式设置 User-Agent 时使用 DefaultUserAgent。
+// 每个 Request 只能调用一次 Send；重复调用返回 ErrInvalidRequest 并关闭未读取的响应体。
 func (r *Request) Send(ctxs ...context.Context) *Request {
+	if r.sendCalled {
+		if !r.responseRead && r.response != nil && r.response.Body != nil {
+			_ = r.response.Body.Close()
+			r.responseRead = true
+		}
+		r.err = wrapError(ErrInvalidRequest, "send request", fmt.Errorf("Send has already been called"))
+		return r
+	}
+	r.sendCalled = true
 	if r.httpc == nil || r.httpc.client == nil {
 		r.err = wrapError(ErrInvalidRequest, "send request", fmt.Errorf("client is nil"))
 		return r
@@ -209,7 +223,14 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 	if r.legacyCookies != nil {
 		cookies = *r.legacyCookies
 	}
-	for _, v := range cookies {
+	for i, v := range cookies {
+		if v == nil {
+			if r.request.Body != nil {
+				_ = r.request.Body.Close()
+			}
+			r.err = wrapError(ErrInvalidRequest, "build request cookies", fmt.Errorf("cookie at index %d is nil", i))
+			return r
+		}
 		r.request.AddCookie(v)
 	}
 
@@ -240,6 +261,22 @@ func (r *Request) GetError() error {
 	return r.err
 }
 
+func (r *Request) beginRead(op string) error {
+	if r.err != nil {
+		return r.err
+	}
+	if r.response == nil {
+		r.err = wrapError(ErrInvalidRequest, op, fmt.Errorf("request has not been sent"))
+		return r.err
+	}
+	if r.responseRead {
+		r.err = wrapError(ErrInvalidRequest, op, fmt.Errorf("response has already been read"))
+		return r.err
+	}
+	r.responseRead = true
+	return nil
+}
+
 // End 读取已发送请求的响应正文并关闭响应体，返回字符串。
 // 4xx 和 5xx 状态码不会自动视为错误。
 func (r *Request) End() (*http.Response, string, error) {
@@ -253,12 +290,8 @@ func (r *Request) End() (*http.Response, string, error) {
 // EndByte 读取已发送请求的响应正文并关闭响应体，返回字节并支持 gzip 解码。
 // 4xx 和 5xx 状态码不会自动视为错误。
 func (r *Request) EndByte() (*http.Response, []byte, error) {
-	if r.err != nil {
-		return nil, nil, r.err
-	}
-	if r.response == nil {
-		r.err = wrapError(ErrInvalidRequest, "read response", fmt.Errorf("request has not been sent"))
-		return nil, nil, r.err
+	if err := r.beginRead("read response"); err != nil {
+		return nil, nil, err
 	}
 
 	defer func() {
@@ -304,12 +337,8 @@ func (r *Request) EndByte() (*http.Response, []byte, error) {
 // EndFile 将已发送请求的响应保存为文件并关闭响应体，仅接受 200 OK。
 // savePath 目录须已存在，已有文件会被覆盖；saveFileName 为空时从 URL 获取文件名。
 func (r *Request) EndFile(savePath, saveFileName string) (resp *http.Response, err error) {
-	if r.err != nil {
-		return nil, r.err
-	}
-	if r.response == nil {
-		r.err = wrapError(ErrInvalidRequest, "save response file", fmt.Errorf("request has not been sent"))
-		return nil, r.err
+	if err := r.beginRead("save response file"); err != nil {
+		return nil, err
 	}
 
 	defer func() {

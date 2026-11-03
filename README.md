@@ -54,6 +54,8 @@ func main() {
 
 先通过 `Send()` 发送请求，再选择一种 `End` 方法读取结果。以下代码片段放在 `main` 函数内独立使用，默认已创建 `client := httpc.NewClient()`；按需导入标准库包及 `github.com/Albert-Zhan/httpc/body`，并替换示例地址和文件路径。
 
+每个 `Request` 只允许调用一次 `Send()`，发送失败后重试也应创建新对象。重复发送返回 `ErrInvalidRequest`，并关闭尚未读取的响应体。
+
 ## 构建请求
 
 ```go
@@ -151,7 +153,7 @@ fmt.Println(resp.StatusCode, text)
 | `EndByte()` | `(*http.Response, []byte, error)` | 读取字节 |
 | `EndFile(dir, name)` | `(*http.Response, error)` | 保存文件 |
 
-每次请求选择一种读取方式，读取结束后关闭响应体。`End` 和 `EndByte` 支持 gzip 解码；响应头、状态码及响应 Cookie 可从返回的 `resp` 获取。
+每次请求选择一种读取方式，读取结束后关闭响应体。成功读取后再次读取返回 `ErrInvalidRequest`；已有发送或读取错误时保留原错误，不再读取。`End` 和 `EndByte` 支持 gzip 解码；响应头、状态码及响应 Cookie 可从返回的 `resp` 获取。
 
 `End` 和 `EndByte` 不把 4xx/5xx 状态码视为错误，调用方应检查 `resp.StatusCode`。`EndFile` 要求响应状态为 `200 OK`：
 
@@ -184,7 +186,7 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-`SetCookieList` 替换此前设置的列表，保存时复制切片；传入 nil 或空切片可清除该列表。Cookie 对象本身仍被共享，发送期间不要修改。手动设置的 `Cookie` 请求头会与列表中的 Cookie 一起发送。
+`SetCookieList` 替换此前设置的列表，保存时复制切片；传入 nil 或空切片可清除该列表。列表中的元素不能为 nil，否则发送时返回 `ErrInvalidRequest`。Cookie 对象本身仍被共享，发送期间不要修改。手动设置的 `Cookie` 请求头会与列表中的 Cookie 一起发送。
 
 ### 自动管理 Cookie
 

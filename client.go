@@ -146,6 +146,9 @@ func (c *HttpClient) ClearProxy() *Client {
 
 // SetSkipVerify 设置是否跳过服务端 TLS 证书验证。
 func (c *HttpClient) SetSkipVerify(isSkipVerify bool) *Client {
+	if c.transport.TLSClientConfig == nil {
+		c.transport.TLSClientConfig = &tls.Config{MinVersion: tls.VersionTLS12}
+	}
 	c.transport.TLSClientConfig.InsecureSkipVerify = isSkipVerify
 	return c
 }
