@@ -33,7 +33,7 @@ func nilValue(v any) bool {
 	return false
 }
 
-func (c *HttpClient) unsupportedBackend(op string) bool {
+func (c *Client) unsupportedBackend(op string) bool {
 	if c.doer == nil {
 		return false
 	}
@@ -50,7 +50,7 @@ func WithDebug(ctx context.Context) context.Context {
 
 // Do 发送标准库请求，未设置 User-Agent 时补充 DefaultUserAgent。
 // 调用方负责关闭成功响应的 Body；4xx/5xx 状态码本身不产生错误。
-func (c *HttpClient) Do(req *http.Request) (*http.Response, error) {
+func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	debug := false
 	if req != nil {
 		debug, _ = req.Context().Value(debugEnabledKey{}).(bool)
@@ -58,7 +58,7 @@ func (c *HttpClient) Do(req *http.Request) (*http.Response, error) {
 	return c.do(req, debug)
 }
 
-func (c *HttpClient) do(req *http.Request, debug bool) (*http.Response, error) {
+func (c *Client) do(req *http.Request, debug bool) (*http.Response, error) {
 	var configErr error
 	switch {
 	case c == nil || (c.client == nil && c.doer == nil):

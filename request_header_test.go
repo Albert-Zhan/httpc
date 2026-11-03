@@ -27,12 +27,6 @@ func TestNilCookiesReturnErrorAndCloseRequestBody(t *testing.T) {
 	}{
 		{"list", func(r *Request) { r.SetCookieList([]*http.Cookie{nil}) }},
 		{"later element", func(r *Request) { r.SetCookieList([]*http.Cookie{{Name: "valid", Value: "one"}, nil}) }},
-		{"legacy list", func(r *Request) { cookies := []*http.Cookie{nil}; r.SetCookies(&cookies) }},
-		{"legacy reassignment", func(r *Request) {
-			cookies := []*http.Cookie{{Name: "valid", Value: "one"}}
-			r.SetCookies(&cookies)
-			cookies = []*http.Cookie{nil}
-		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			calls := 0

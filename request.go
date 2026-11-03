@@ -29,9 +29,6 @@ type Request struct {
 	sendCalled    bool
 	responseRead  bool
 	responseLimit int64
-
-	// 保留切片变量的引用，使发送前的重赋值和追加仍然生效。
-	legacyCookies *[]*http.Cookie
 }
 
 // NewRequest 创建默认使用 GET 方法的请求。
@@ -64,13 +61,6 @@ func (r *Request) SetURL(rawURL string) *Request {
 	return r
 }
 
-// SetUrl 设置请求的 URL 地址。
-//
-// Deprecated: 请使用 SetURL。此方法在 v1.x 中保留，可能在未来主版本中移除。
-func (r *Request) SetUrl(rawURL string) *Request {
-	return r.SetURL(rawURL)
-}
-
 // SetParam 追加查询参数，同名参数保留多个值。
 func (r *Request) SetParam(name, value string) *Request {
 	if r.param == nil {
@@ -101,23 +91,11 @@ func (r *Request) SetBasicAuth(username, password string) *Request {
 }
 
 // SetCookieList 替换 Cookie 列表，复制切片但共享 Cookie 对象。
-// nil 或空列表可清除列表，与 SetCookies 混用时后一次设置生效。
+// nil 或空列表可清除列表，后一次调用替换此前列表。
 // 列表含 nil 元素时，Send 返回 ErrInvalidRequest。
 // 发送期间不要修改 Cookie 对象。
 func (r *Request) SetCookieList(cookies []*http.Cookie) *Request {
 	r.cookies = slices.Clone(cookies)
-	r.legacyCookies = nil
-	return r
-}
-
-// SetCookies 设置请求的 Cookie 列表，保留对调用方切片变量的引用。
-// 调用后、Send 前对该变量的赋值或追加仍会影响请求；nil 可清除列表。
-// 列表含 nil 元素时，Send 返回 ErrInvalidRequest。
-//
-// Deprecated: 请使用 SetCookieList。此方法在 v1.x 中保留，可能在未来主版本中移除。
-func (r *Request) SetCookies(cookies *[]*http.Cookie) *Request {
-	r.cookies = nil
-	r.legacyCookies = cookies
 	return r
 }
 
@@ -228,11 +206,7 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 	if _, explicit := r.request.Header["Content-Type"]; contentType != "" && !explicit {
 		r.request.Header.Set("Content-Type", contentType)
 	}
-	cookies := r.cookies
-	if r.legacyCookies != nil {
-		cookies = *r.legacyCookies
-	}
-	for i, v := range cookies {
+	for i, v := range r.cookies {
 		if v == nil {
 			if r.request.Body != nil {
 				_ = r.request.Body.Close()

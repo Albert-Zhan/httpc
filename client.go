@@ -16,10 +16,10 @@ import (
 	"time"
 )
 
-// HttpClient 提供 HTTP 客户端配置和连接管理。
-//
-// Deprecated: 请使用 Client。此名称在 v1.x 中保留，可能在未来主版本中移除。
-type HttpClient struct {
+// Client 提供 HTTP 客户端配置和连接管理，配置完成后可并发复用。
+// 创建后不应复制，发送请求期间不要修改配置。
+// NewClientWithDoer 创建的外部后端只接受日志配置；其他客户端配置须在后端上完成。
+type Client struct {
 	client       *http.Client
 	doer         Doer
 	backendErr   error
@@ -31,11 +31,6 @@ type HttpClient struct {
 	closeMu      sync.Mutex
 	closing      atomic.Bool
 }
-
-// Client 提供 HTTP 客户端配置和连接管理，配置完成后可并发复用。
-// 创建后不应复制，发送请求期间不要修改配置。
-// NewClientWithDoer 创建的外部后端只接受日志配置；其他客户端配置须在后端上完成。
-type Client = HttpClient
 
 // NewClient 创建并返回一个默认配置的客户端。
 func NewClient() *Client {
@@ -60,20 +55,13 @@ func NewClient() *Client {
 		Transport: defaultTransport,
 		Timeout:   30 * time.Second,
 	}
-	return &HttpClient{client: client, transport: defaultTransport, debugOut: os.Stdout}
-}
-
-// NewHttpClient 创建并返回一个默认配置的客户端。
-//
-// Deprecated: 请使用 NewClient。此函数在 v1.x 中保留，可能在未来主版本中移除。
-func NewHttpClient() *Client {
-	return NewClient()
+	return &Client{client: client, transport: defaultTransport, debugOut: os.Stdout}
 }
 
 // SetDebugOutput 设置日志 Writer，默认 os.Stdout；nil 表示丢弃日志。
 // Writer 由调用方关闭。同一客户端串行写入，多个客户端共用时需保证并发安全。
 // 应在发送前完成配置；日志写入错误不影响请求。
-func (c *HttpClient) SetDebugOutput(w io.Writer) *Client {
+func (c *Client) SetDebugOutput(w io.Writer) *Client {
 	c.debugMu.Lock()
 	defer c.debugMu.Unlock()
 	if w == nil {
@@ -86,7 +74,7 @@ func (c *HttpClient) SetDebugOutput(w io.Writer) *Client {
 // AddDebugSensitiveFields 添加调试日志需要脱敏的头或字段名。
 // 默认不脱敏；仅匹配已配置的名称，忽略大小写和分隔符。应在发送请求前调用。
 // username、password、userinfo、fragment 可用于 URL 的对应部分。
-func (c *HttpClient) AddDebugSensitiveFields(names ...string) *Client {
+func (c *Client) AddDebugSensitiveFields(names ...string) *Client {
 	c.debugMu.Lock()
 	defer c.debugMu.Unlock()
 	if c.debugKeys == nil {
@@ -103,7 +91,7 @@ func (c *HttpClient) AddDebugSensitiveFields(names ...string) *Client {
 // CloseIdleConnections 关闭当前空闲连接，不中断正在使用的连接，也不禁止后续请求。
 // 包装后的各层分别处理；外部实现持有的连接池需通过同名方法释放。
 // 可在客户端被并发使用时调用。
-func (c *HttpClient) CloseIdleConnections() {
+func (c *Client) CloseIdleConnections() {
 	if c.doer != nil {
 		if closer, ok := c.doer.(interface{ CloseIdleConnections() }); ok {
 			closer.CloseIdleConnections()
@@ -124,7 +112,7 @@ func (c *HttpClient) CloseIdleConnections() {
 // 包装器及其内部状态须支持并发调用；修改请求时应克隆并保留原 context。
 // 返回独立 Transport 可接管发送，其连接配置由调用方负责。
 // nil 包装器或 nil 返回值（含带类型的 nil）会使 Send 返回 ErrInvalidRequest，后续合法调用可恢复。
-func (c *HttpClient) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) *Client {
+func (c *Client) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) *Client {
 	if c.unsupportedBackend("WrapTransport") {
 		return c
 	}
@@ -160,7 +148,7 @@ func isNilTransport(tr http.RoundTripper) bool {
 
 // CustomizeTransport 在发送请求前配置内置 Transport。
 // 包装器通过 next 委托发送时继续生效；独立替换的 Transport 由调用方配置。
-func (c *HttpClient) CustomizeTransport(f func(tr *http.Transport)) *Client {
+func (c *Client) CustomizeTransport(f func(tr *http.Transport)) *Client {
 	if c.unsupportedBackend("CustomizeTransport") {
 		return c
 	}
@@ -170,7 +158,7 @@ func (c *HttpClient) CustomizeTransport(f func(tr *http.Transport)) *Client {
 
 // SetProxy 设置代理地址，支持 http、https、socks5 和 socks5h。
 // 地址无效时在 Send 中报错，不会退回直连；设置合法地址或调用 ClearProxy 可恢复。
-func (c *HttpClient) SetProxy(proxyURL string) *Client {
+func (c *Client) SetProxy(proxyURL string) *Client {
 	if c.unsupportedBackend("SetProxy") {
 		return c
 	}
@@ -206,7 +194,7 @@ func (c *HttpClient) SetProxy(proxyURL string) *Client {
 }
 
 // ClearProxy 清除代理配置，恢复直连。
-func (c *HttpClient) ClearProxy() *Client {
+func (c *Client) ClearProxy() *Client {
 	if c.unsupportedBackend("ClearProxy") {
 		return c
 	}
@@ -215,7 +203,7 @@ func (c *HttpClient) ClearProxy() *Client {
 }
 
 // SetSkipVerify 设置是否跳过服务端 TLS 证书验证。
-func (c *HttpClient) SetSkipVerify(isSkipVerify bool) *Client {
+func (c *Client) SetSkipVerify(isSkipVerify bool) *Client {
 	if c.unsupportedBackend("SetSkipVerify") {
 		return c
 	}
@@ -227,7 +215,7 @@ func (c *HttpClient) SetSkipVerify(isSkipVerify bool) *Client {
 }
 
 // SetTimeout 设置客户端总请求超时，0 表示禁用该超时。
-func (c *HttpClient) SetTimeout(t time.Duration) *Client {
+func (c *Client) SetTimeout(t time.Duration) *Client {
 	if c.unsupportedBackend("SetTimeout") {
 		return c
 	}
@@ -236,7 +224,7 @@ func (c *HttpClient) SetTimeout(t time.Duration) *Client {
 }
 
 // SetCookieJar 设置自动管理 Cookie 的 Jar，nil 表示禁用。
-func (c *HttpClient) SetCookieJar(j http.CookieJar) *Client {
+func (c *Client) SetCookieJar(j http.CookieJar) *Client {
 	if c.unsupportedBackend("SetCookieJar") {
 		return c
 	}
@@ -245,7 +233,7 @@ func (c *HttpClient) SetCookieJar(j http.CookieJar) *Client {
 }
 
 // SetRedirect 设置重定向回调，语义与 http.Client.CheckRedirect 一致。
-func (c *HttpClient) SetRedirect(f func(req *http.Request, via []*http.Request) error) *Client {
+func (c *Client) SetRedirect(f func(req *http.Request, via []*http.Request) error) *Client {
 	if c.unsupportedBackend("SetRedirect") {
 		return c
 	}

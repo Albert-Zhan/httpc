@@ -27,9 +27,7 @@ var (
 	ErrResponseTooLarge = errors.New("httpc: response body too large")
 	// ErrDecodeResponse 表示 gzip 响应解压失败。
 	ErrDecodeResponse = errors.New("httpc: decode response failed")
-	// ErrSaveFile 表示下载文件创建、写入或关闭失败。
-	ErrSaveFile = errors.New("httpc: save file failed")
-	// ErrHTTPStatus 表示文件输出或下载阶段返回了不符合预期的状态码。
+	// ErrHTTPStatus 表示下载器收到不符合下载阶段预期的状态码。
 	// End、EndByte 和 EndTo 不会因 HTTP 状态码而返回此错误。
 	ErrHTTPStatus = errors.New("httpc: unexpected HTTP status")
 )

@@ -10,50 +10,9 @@ import (
 	"testing"
 )
 
-func TestEndFileClosesResponseBody(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		status     int
-		missingDir bool
-	}{
-		{name: "not found", status: http.StatusNotFound},
-		{name: "server error", status: http.StatusInternalServerError},
-		{name: "success", status: http.StatusOK},
-		{name: "file creation failure", status: http.StatusOK, missingDir: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body := &trackedReadCloser{Reader: strings.NewReader("download content")}
-			client := NewClient()
-			client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: body, Request: r}, nil
-			})
-			dir := t.TempDir()
-			if tc.missingDir {
-				dir = filepath.Join(dir, "missing")
-			}
-			resp, err := NewRequest(client).SetURL("http://example.test/file").Send().EndFile(dir, "file.txt")
-			wantError := tc.status != http.StatusOK || tc.missingDir
-			if (err != nil) != wantError || resp == nil || resp.StatusCode != tc.status {
-				t.Fatalf("response = %v, error = %v, wantError = %v", resp, err, wantError)
-			}
-			if body.closes != 1 {
-				t.Error("response body was not closed")
-			}
-			content, fileErr := os.ReadFile(filepath.Join(dir, "file.txt"))
-			if wantError {
-				if !os.IsNotExist(fileErr) {
-					t.Fatalf("unexpected download file: %v", fileErr)
-				}
-			} else if fileErr != nil || string(content) != "download content" {
-				t.Fatalf("content = %q, error = %v", content, fileErr)
-			}
-		})
-	}
-}
-
 func TestResponseCanOnlyBeReadOnce(t *testing.T) {
-	for _, first := range []string{"End", "EndByte", "EndTo", "EndFile"} {
-		for _, second := range []string{"End", "EndByte", "EndTo", "EndFile"} {
+	for _, first := range []string{"End", "EndByte", "EndTo"} {
+		for _, second := range []string{"End", "EndByte", "EndTo"} {
 			t.Run(first+"/"+second, func(t *testing.T) {
 				responseBody := &trackedReadCloser{Reader: strings.NewReader("content")}
 				client := NewClient()
@@ -63,8 +22,7 @@ func TestResponseCanOnlyBeReadOnce(t *testing.T) {
 					return &http.Response{StatusCode: 200, Header: make(http.Header), Body: responseBody}, nil
 				})
 				req := NewRequest(client).SetURL("http://example.test/").Send()
-				dir := t.TempDir()
-				read := func(method, name string) error {
+				read := func(method string) error {
 					switch method {
 					case "End":
 						_, _, err := req.End()
@@ -76,24 +34,21 @@ func TestResponseCanOnlyBeReadOnce(t *testing.T) {
 						_, _, err := req.EndByte()
 						return err
 					default:
-						_, err := req.EndFile(dir, name)
-						return err
+						t.Fatalf("unknown method %q", method)
+						return nil
 					}
 				}
-				if err := read(first, "first.txt"); err != nil {
+				if err := read(first); err != nil {
 					t.Fatal(err)
 				}
 				if responseBody.closes != 1 || responseBody.reads == 0 {
 					t.Fatal("first read did not consume and close the body")
 				}
 				reads := responseBody.reads
-				err := read(second, "second.txt")
+				err := read(second)
 				assertError(t, err, ErrInvalidRequest, nil)
 				if req.GetError() != err || responseBody.reads != reads || responseBody.closes != 1 {
 					t.Fatal("repeated read touched the response or lost its error")
-				}
-				if _, err := os.Stat(filepath.Join(dir, "second.txt")); !os.IsNotExist(err) {
-					t.Fatal("repeated read created a download file")
 				}
 				req.Send()
 				if calls != 1 || responseBody.closes != 1 {
@@ -115,7 +70,7 @@ func TestRepeatedReadPreservesOriginalFailure(t *testing.T) {
 	_, _, first := req.EndByte()
 	assertError(t, first, ErrReadResponse, cause)
 	reads := responseBody.reads
-	_, second := req.EndFile(t.TempDir(), "ignored.txt")
+	_, second := req.EndTo(io.Discard)
 	if second != first || responseBody.reads != reads || responseBody.closes != 1 {
 		t.Fatal("repeated read lost the original failure or touched the body")
 	}
@@ -124,37 +79,8 @@ func TestRepeatedReadPreservesOriginalFailure(t *testing.T) {
 func TestReadBeforeSendReturnsError(t *testing.T) {
 	_, _, err := NewRequest(NewClient()).End()
 	assertError(t, err, ErrInvalidRequest, nil)
-	_, err = NewRequest(NewClient()).EndFile(t.TempDir(), "file")
+	_, err = NewRequest(NewClient()).EndTo(io.Discard)
 	assertError(t, err, ErrInvalidRequest, nil)
-}
-
-func TestDownloadErrorsAreClassified(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		status int
-		reader io.Reader
-		dir    string
-		kind   error
-		cause  error
-	}{
-		{"HTTP status", http.StatusNotFound, strings.NewReader("not found"), t.TempDir(), ErrHTTPStatus, nil},
-		{"file creation", http.StatusOK, strings.NewReader("content"), filepath.Join(t.TempDir(), "missing"), ErrSaveFile, os.ErrNotExist},
-		{"file copy", http.StatusOK, failingReader{io.ErrUnexpectedEOF}, t.TempDir(), ErrSaveFile, io.ErrUnexpectedEOF},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			responseBody := &trackedReadCloser{Reader: tc.reader}
-			client := NewClient()
-			client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: responseBody}, nil
-			})
-			req := NewRequest(client).SetURL("http://example.test/file").Send()
-			_, err := req.EndFile(tc.dir, "file")
-			assertError(t, err, tc.kind, tc.cause)
-			if req.GetError() != err || responseBody.closes != 1 {
-				t.Fatal("download error was not retained or response body was not closed")
-			}
-		})
-	}
 }
 
 func TestEndDoesNotTreatHTTPStatusAsError(t *testing.T) {
@@ -177,6 +103,30 @@ func TestEndToStreamsWithoutClosingWriter(t *testing.T) {
 		source.closes != 1 || dst.closes != 0 {
 		t.Fatalf("stream response=%v error=%v output=%q source closes=%d writer closes=%d",
 			resp, err, dst.data.String(), source.closes, dst.closes)
+	}
+}
+
+func TestEndToWritesCallerOwnedFile(t *testing.T) {
+	req, source := responseRequest(t, strings.NewReader("response content"), "")
+	path := filepath.Join(t.TempDir(), "response.bin")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = file.Close() })
+	if _, err = req.EndTo(file); err != nil {
+		t.Fatal(err)
+	}
+	// 文件的关闭和后续使用由调用方负责。
+	if _, err = file.WriteString("\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err = file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != "response content\n" || source.closes != 1 {
+		t.Fatalf("content=%q error=%v body closes=%d", data, err, source.closes)
 	}
 }
 

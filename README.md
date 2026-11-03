@@ -14,7 +14,7 @@ v2 的导入路径为 `github.com/Albert-Zhan/httpc/v2`；本地运行和双模�
 go get github.com/Albert-Zhan/httpc/v2@v2.0.0
 ```
 
-[API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc/v2) · [发布版本](https://github.com/Albert-Zhan/httpc/releases) · [开发与发布规范](CONTRIBUTING.md)
+[API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc/v2) · [发布版本](https://github.com/Albert-Zhan/httpc/releases) · [开发与发布规范](CONTRIBUTING.md) · [v1 → v2 迁移](MIGRATING.md)
 
 ## 快速开始
 
@@ -142,7 +142,6 @@ fmt.Println(resp.StatusCode, text)
 | `End()` | `(*http.Response, string, error)` | 读取文本 |
 | `EndByte()` | `(*http.Response, []byte, error)` | 读取字节 |
 | `EndTo(writer)` | `(*http.Response, error)` | 流式写入 `io.Writer` |
-| `EndFile(dir, name)` | `(*http.Response, error)` | 下载文件，仅接受 200 OK |
 
 `End`、`EndByte` 和 `EndTo` 不把 4xx/5xx 视为操作错误。`err == nil` 表示发送及读取完成，业务上是否成功还需判断 `resp.StatusCode`。响应头及响应 Cookie 也从 `resp` 获取。
 
@@ -165,27 +164,15 @@ fmt.Printf("status=%d sha256=%x\n", resp.StatusCode, hash.Sum(nil))
 
 失败时，`End`、`EndByte` 不返回部分正文；Writer 或文件可能保留已写入内容，调用方根据错误决定是否使用或清理。Writer 写入失败返回 `ErrWriteResponse`，原始错误链保留。
 
-### 简单文件输出
-
-```go
-resp, err := httpc.NewRequest(client).
-	SetURL("https://example.com/archive.zip").Send().EndFile("./downloads", "archive.zip")
-if err != nil {
-	fmt.Println(err)
-	return
-}
-fmt.Println(resp.StatusCode)
-```
-
-目录须已存在，目标文件存在时会被覆盖；文件名为空时从请求 URL 获取。下载收到非 200 状态码返回 `ErrHTTPStatus`；文件创建、写入、关闭，以及下载中的读取或超限错误可匹配 `ErrSaveFile`。
-
 所有 End 方法支持单一的 `Content-Encoding: gzip`，包括显式请求 gzip 的情况；返回的响应头保留 Transport 提供的值。仅有 `application/gzip` MIME 类型或 `.gz` 文件名不会触发解包，其他编码或编码组合按原始正文读取。gzip 头配空正文按空正文处理并保留状态码；非空数据截断、损坏或校验失败仍返回 `ErrDecodeResponse`。
 
 未发送就读取、重复发送、成功读取后再次读取均返回 `ErrInvalidRequest`。重复发送会关闭未读取的响应体；已有发送或读取错误时，后续读取保留原错误，不再访问正文。
 
 ## 下载器
 
-`downloader` 是核心模块的独立子包，可以使用 `*httpc.Client`、`*http.Client` 或其他标准请求发送器，不改变已有的 End 方法：
+v2 移除了 `Request.EndFile`，文件下载统一建议使用 `downloader`。已有响应需要写入文件或其他存储时，使用 `EndTo(io.Writer)`；迁移方式及行为差异见 [迁移说明](MIGRATING.md)。
+
+`downloader` 是核心模块的独立子包，可以使用 `*httpc.Client`、`*http.Client` 或其他标准请求发送器：
 
 ```go
 client := httpc.NewClient().SetTimeout(0)
@@ -446,9 +433,9 @@ if err != nil {
 | `ErrReadResponse` / `ErrWriteResponse` | 响应读取失败 / Writer 写入失败 |
 | `ErrResponseTooLarge` | 解码后正文超过限制 |
 | `ErrDecodeResponse` | gzip 解析或解压失败 |
-| `ErrSaveFile` / `ErrHTTPStatus` | 下载文件处理失败 / 下载收到非 200 状态码 |
+| `ErrHTTPStatus` | 下载器收到不符合下载阶段预期的状态码 |
 
-同一错误可能匹配多个类别：上传文件不存在可匹配 `ErrRequestBody`、`ErrUploadFile` 和 `os.ErrNotExist`；下载中的超限错误也匹配 `ErrSaveFile`。`GetResponse()` 和 `GetError()` 分别返回响应对象与最近一次发送或读取错误。
+同一错误可能匹配多个类别：上传文件不存在可匹配 `ErrRequestBody`、`ErrUploadFile` 和 `os.ErrNotExist`。`GetResponse()` 和 `GetError()` 分别返回响应对象与最近一次发送或读取错误。
 
 ## 开发与许可证
 

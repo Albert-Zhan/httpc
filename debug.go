@@ -29,12 +29,12 @@ func normalizeDebugKey(name string) string {
 	}, name)
 }
 
-func (c *HttpClient) sensitiveDebugKey(name string) bool {
+func (c *Client) sensitiveDebugKey(name string) bool {
 	_, ok := c.debugKeys[normalizeDebugKey(name)]
 	return ok
 }
 
-func (c *HttpClient) debugURL(u *url.URL) string {
+func (c *Client) debugURL(u *url.URL) string {
 	copyURL := *u
 	if len(c.debugKeys) == 0 {
 		return copyURL.String()
@@ -73,7 +73,7 @@ func (c *HttpClient) debugURL(u *url.URL) string {
 	return copyURL.String()
 }
 
-func (c *HttpClient) redactDebugValues(values url.Values) bool {
+func (c *Client) redactDebugValues(values url.Values) bool {
 	changed := false
 	for key := range values {
 		if c.sensitiveDebugKey(key) {
@@ -84,7 +84,7 @@ func (c *HttpClient) redactDebugValues(values url.Values) bool {
 	return changed
 }
 
-func (c *HttpClient) debugHeaders(headers http.Header) http.Header {
+func (c *Client) debugHeaders(headers http.Header) http.Header {
 	copyHeaders := headers.Clone()
 	if len(c.debugKeys) == 0 {
 		return copyHeaders
@@ -131,7 +131,7 @@ func debugJSON(value any) string {
 	return string(encoded)
 }
 
-func (c *HttpClient) redactDebugJSON(value jsontext.Value) (jsontext.Value, error) {
+func (c *Client) redactDebugJSON(value jsontext.Value) (jsontext.Value, error) {
 	switch value.Kind() {
 	case '{':
 		var fields map[string]jsontext.Value
@@ -169,7 +169,7 @@ func (c *HttpClient) redactDebugJSON(value jsontext.Value) (jsontext.Value, erro
 }
 
 // debugBody 只读取可重放的正文副本，避免消耗实际请求体。
-func (c *HttpClient) debugBody(req *http.Request) string {
+func (c *Client) debugBody(req *http.Request) string {
 	if req.Body == nil || req.Body == http.NoBody {
 		return ""
 	}

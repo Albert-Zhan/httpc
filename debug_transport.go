@@ -140,7 +140,7 @@ func (d *debugTrace) hooks() *httptrace.ClientTrace {
 	}
 }
 
-func (c *HttpClient) debugEnabled() bool {
+func (c *Client) debugEnabled() bool {
 	c.debugMu.Lock()
 	defer c.debugMu.Unlock()
 	return c.debugOut != nil && c.debugOut != io.Discard
@@ -187,7 +187,7 @@ func (t *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return resp, err
 }
 
-func (c *HttpClient) writeDebugAttempt(id, hop uint64, attempt int, a *debugAttempt) {
+func (c *Client) writeDebugAttempt(id, hop uint64, attempt int, a *debugAttempt) {
 	c.debugMu.Lock()
 	defer c.debugMu.Unlock()
 	if c.debugOut == nil || c.debugOut == io.Discard {
