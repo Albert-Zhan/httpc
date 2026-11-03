@@ -14,16 +14,18 @@ import (
 
 // 编译期检查新旧 API 的函数和方法签名兼容。
 var (
-	_ func() *httpc.HttpClient                    = httpc.NewClient
-	_ func() *httpc.Client                        = httpc.NewHttpClient
-	_ func(*httpc.HttpClient) *httpc.Request      = httpc.NewRequest
-	_ func(*httpc.Client) *httpc.Client           = (*httpc.HttpClient).ClearProxy
-	_ func() *body.Url                            = body.NewURLEncode
-	_ func() *body.URL                            = body.NewUrlEncode
-	_ func(*body.URL, string, string) *body.Url   = (*body.Url).SetData
-	_ func(*httpc.Request, string) *httpc.Request = (*httpc.Request).SetUrl
-	_ func(*httpc.Request, string) *httpc.Request = (*httpc.Request).SetURL
-	_ map[body.URL]struct{}                       = map[body.Url]struct{}{}
+	_ func(*httpc.Request, int64) *httpc.Request              = (*httpc.Request).SetResponseLimit
+	_ func(*httpc.Request, io.Writer) (*http.Response, error) = (*httpc.Request).EndTo
+	_ func() *httpc.HttpClient                                = httpc.NewClient
+	_ func() *httpc.Client                                    = httpc.NewHttpClient
+	_ func(*httpc.HttpClient) *httpc.Request                  = httpc.NewRequest
+	_ func(*httpc.Client) *httpc.Client                       = (*httpc.HttpClient).ClearProxy
+	_ func() *body.Url                                        = body.NewURLEncode
+	_ func() *body.URL                                        = body.NewUrlEncode
+	_ func(*body.URL, string, string) *body.Url               = (*body.Url).SetData
+	_ func(*httpc.Request, string) *httpc.Request             = (*httpc.Request).SetUrl
+	_ func(*httpc.Request, string) *httpc.Request             = (*httpc.Request).SetURL
+	_ map[body.URL]struct{}                                   = map[body.Url]struct{}{}
 )
 
 func TestClientNamingCompatibility(t *testing.T) {

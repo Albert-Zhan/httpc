@@ -8,10 +8,10 @@ httpc 是一个支持链式调用的 Go HTTP 客户端库，提供请求构建�
 
 ## 安装
 
-需要 **Go 1.27 或更新版本**。安装 v1.5.0：
+需要 **Go 1.27 或更新版本**。本文对应主分支，安装包含下述接口的开发版本：
 
 ```sh
-go get github.com/Albert-Zhan/httpc@v1.5.0
+go get github.com/Albert-Zhan/httpc@master
 ```
 
 [完整 API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc) · [发布版本](https://github.com/Albert-Zhan/httpc/releases)
@@ -78,7 +78,7 @@ fmt.Println(resp.StatusCode, text)
 - 默认方法为 GET；通过 `SetMethod("post")` 等设置其他方法，方法名不区分大小写。
 - `SetParam` 合并 URL 查询参数，同名参数保留多个值。请求正文通过 `SetBody` 设置。
 - 请求头名称不区分大小写。`SetHeader` 替换同名头的全部值，`AddHeader` 追加值。
-- 未设置 `User-Agent` 时，自动使用 `httpc/` 加 `httpc.Version`，HTTP/1.1 和 HTTP/2 使用相同值。本版本默认值为 `httpc/1.5.0`；自定义 UA 优先，`SetHeader("User-Agent", "")` 可禁止发送 UA。
+- 未设置 `User-Agent` 时，自动使用 `httpc/` 加 `httpc.Version`，HTTP/1.1 和 HTTP/2 使用相同值。当前主分支版本为 `1.5.1-dev`；自定义 UA 优先，`SetHeader("User-Agent", "")` 可禁止发送 UA。
 - `SetBasicAuth("username", "password")` 设置 Basic Auth，应通过 HTTPS 使用。它与手动设置 `Authorization` 遵循后一次设置生效的规则。
 
 ## 请求体与上传
@@ -153,11 +153,12 @@ fmt.Println(resp.StatusCode, text)
 | --- | --- | --- |
 | `End()` | `(*http.Response, string, error)` | 读取文本 |
 | `EndByte()` | `(*http.Response, []byte, error)` | 读取字节 |
+| `EndTo(writer)` | `(*http.Response, error)` | 流式写入任意 `io.Writer` |
 | `EndFile(dir, name)` | `(*http.Response, error)` | 保存文件 |
 
-每次请求选择一种读取方式，读取结束后关闭响应体。成功读取后再次读取返回 `ErrInvalidRequest`；已有发送或读取错误时保留原错误，不再读取。`End` 和 `EndByte` 支持 gzip 解码；响应头、状态码及响应 Cookie 可从返回的 `resp` 获取。
+每次请求选择一种读取方式，读取结束或失败后关闭响应体。成功读取后再次读取返回 `ErrInvalidRequest`；已有发送或读取错误时保留原错误，不再读取。所有读取方法均支持 gzip 解码，包括显式设置 `Accept-Encoding: gzip` 的情况；响应头、状态码及响应 Cookie 可从返回的 `resp` 获取。
 
-`End` 和 `EndByte` 不把 4xx/5xx 状态码视为错误，调用方应检查 `resp.StatusCode`。`EndFile` 要求响应状态为 `200 OK`：
+`End`、`EndByte` 和 `EndTo` 不把 4xx/5xx 状态码视为错误，调用方应检查 `resp.StatusCode`。`EndFile` 要求响应状态为 `200 OK`：
 
 ```go
 resp, err := httpc.NewRequest(client).
@@ -171,6 +172,29 @@ fmt.Println(resp.StatusCode)
 ```
 
 保存目录必须已存在，目标文件存在时会被覆盖。文件名为空时从请求 URL 获取。
+
+`EndTo` 逐块写入 Writer，不在库内缓存完整正文。可以传入文件、哈希计算器、`io.MultiWriter` 或自定义 Writer；Writer 由调用方管理，httpc 不会关闭它：
+
+```go
+var output bytes.Buffer
+resp, err := httpc.NewRequest(client).
+	SetURL("https://example.com/data").
+	SetResponseLimit(8 << 20).
+	Send().EndTo(&output)
+if err != nil {
+	if errors.Is(err, httpc.ErrResponseTooLarge) {
+		fmt.Println("响应正文超过 8 MiB")
+	}
+	return
+}
+fmt.Println(resp.StatusCode, output.Len())
+```
+
+`SetResponseLimit(n)` 在读取前设置正文大小上限，单位为字节；默认不限制，0 或负值取消限制。它覆盖全部 End 系列读取方法，按 gzip 解压后的字节数计数，不依赖 `Content-Length`；恰好等于上限时成功，超过时返回 `ErrResponseTooLarge`。直接读取 `GetResponse().Body` 时由调用方自行控制大小和关闭。
+
+失败时，`End` 和 `EndByte` 不返回部分正文；Writer 或文件可能保留已写入内容，调用方应根据错误决定是否使用或清理。超限时写入不超过上限，读取端最多额外探测一个解码后字节。Writer 失败返回 `ErrWriteResponse`，保留原始错误链；下载中的超限、读取或写入错误同时匹配 `ErrSaveFile`。
+
+gzip 解码识别单一的 `Content-Encoding: gzip`，不修改返回响应头。仅有 `Content-Type: application/gzip` 或 `.gz` 文件名不会触发解码；其他编码或编码组合按原始正文读取。
 
 ## Cookie 管理
 
@@ -295,7 +319,7 @@ if err != nil {
 [httpc Debug]
 -------------------------------------------------------------------
 Request: POST https://example.com/login?token=%5BREDACTED%5D
-Header: {"Authorization":["[REDACTED]"],"Content-Type":["application/json"],"Cookie":["[REDACTED]"],"User-Agent":["httpc/1.5.0"]}
+Header: {"Authorization":["[REDACTED]"],"Content-Type":["application/json"],"Cookie":["[REDACTED]"],"User-Agent":["httpc/1.5.1-dev"]}
 Cookies: {"session":"[REDACTED]"}
 Body: {"password":"[REDACTED]","username":"alice"}
 -------------------------------------------------------------------
@@ -336,6 +360,8 @@ if err != nil {
 | `ErrUploadFile` | 上传文件处理失败 |
 | `ErrSendRequest` | 连接、TLS、代理、取消、超时等发送失败 |
 | `ErrReadResponse` | 响应体读取失败 |
+| `ErrWriteResponse` | 响应正文写入 Writer 失败 |
+| `ErrResponseTooLarge` | 解码后的响应正文超过大小限制 |
 | `ErrDecodeResponse` | gzip 响应解析或解压失败 |
 | `ErrSaveFile` | 下载文件创建、写入或关闭失败 |
 | `ErrHTTPStatus` | 下载收到非 200 状态码 |

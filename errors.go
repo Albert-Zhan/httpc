@@ -19,12 +19,16 @@ var (
 	ErrSendRequest = errors.New("httpc: send request failed")
 	// ErrReadResponse 表示响应体读取失败。
 	ErrReadResponse = errors.New("httpc: read response failed")
+	// ErrWriteResponse 表示响应正文写入 Writer 失败。
+	ErrWriteResponse = errors.New("httpc: write response failed")
+	// ErrResponseTooLarge 表示解码后的响应正文超过请求设置的大小限制。
+	ErrResponseTooLarge = errors.New("httpc: response body too large")
 	// ErrDecodeResponse 表示 gzip 响应解压失败。
 	ErrDecodeResponse = errors.New("httpc: decode response failed")
 	// ErrSaveFile 表示下载文件创建、写入或关闭失败。
 	ErrSaveFile = errors.New("httpc: save file failed")
 	// ErrHTTPStatus 表示下载接口返回了非 200 状态码。
-	// End 和 EndByte 不会因 HTTP 状态码而返回此错误。
+	// End、EndByte 和 EndTo 不会因 HTTP 状态码而返回此错误。
 	ErrHTTPStatus = errors.New("httpc: unexpected HTTP status")
 )
 

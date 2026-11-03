@@ -1,16 +1,12 @@
 package httpc
 
 import (
-	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
@@ -19,19 +15,20 @@ import (
 
 // Request 构建、发送并读取一次 HTTP 请求，不支持并发共享。
 type Request struct {
-	httpc        *Client
-	request      *http.Request
-	response     *http.Response
-	method       string
-	url          string
-	param        url.Values
-	header       http.Header
-	cookies      []*http.Cookie
-	data         body.Body
-	debug        bool
-	err          error
-	sendCalled   bool
-	responseRead bool
+	httpc         *Client
+	request       *http.Request
+	response      *http.Response
+	method        string
+	url           string
+	param         url.Values
+	header        http.Header
+	cookies       []*http.Cookie
+	data          body.Body
+	debug         bool
+	err           error
+	sendCalled    bool
+	responseRead  bool
+	responseLimit int64
 
 	// 保留切片变量的引用，使发送前的重赋值和追加仍然生效。
 	legacyCookies *[]*http.Cookie
@@ -134,6 +131,14 @@ func (r *Request) SetDebug(d bool) *Request {
 // SetBody 设置请求正文。
 func (r *Request) SetBody(body body.Body) *Request {
 	r.data = body
+	return r
+}
+
+// SetResponseLimit 设置读取响应正文的最大字节数，按 gzip 解压后的大小计数。
+// 默认不限制，0 或负值取消限制；应在读取响应前设置。
+// 超出限制返回 ErrResponseTooLarge，Writer 或文件中可能保留已写入的部分内容。
+func (r *Request) SetResponseLimit(n int64) *Request {
+	r.responseLimit = n
 	return r
 }
 
@@ -259,127 +264,4 @@ func (r *Request) GetResponse() *http.Response {
 // GetError 返回最近一次发送或读取错误。
 func (r *Request) GetError() error {
 	return r.err
-}
-
-func (r *Request) beginRead(op string) error {
-	if r.err != nil {
-		return r.err
-	}
-	if r.response == nil {
-		r.err = wrapError(ErrInvalidRequest, op, fmt.Errorf("request has not been sent"))
-		return r.err
-	}
-	if r.responseRead {
-		r.err = wrapError(ErrInvalidRequest, op, fmt.Errorf("response has already been read"))
-		return r.err
-	}
-	r.responseRead = true
-	return nil
-}
-
-// End 读取已发送请求的响应正文并关闭响应体，返回字符串。
-// 4xx 和 5xx 状态码不会自动视为错误。
-func (r *Request) End() (*http.Response, string, error) {
-	resp, bodyByte, err := r.EndByte()
-	if err != nil {
-		return resp, "", err
-	}
-	return resp, string(bodyByte), nil
-}
-
-// EndByte 读取已发送请求的响应正文并关闭响应体，返回字节并支持 gzip 解码。
-// 4xx 和 5xx 状态码不会自动视为错误。
-func (r *Request) EndByte() (*http.Response, []byte, error) {
-	if err := r.beginRead("read response"); err != nil {
-		return nil, nil, err
-	}
-
-	defer func() {
-		_ = r.response.Body.Close()
-	}()
-
-	var (
-		bodyByte []byte
-		err      error
-	)
-
-	encoding := strings.ToLower(r.response.Header.Get("Content-Encoding"))
-	if strings.Contains(encoding, "gzip") {
-		var gzReader *gzip.Reader
-		gzReader, err = gzip.NewReader(r.response.Body)
-		if err != nil {
-			r.err = wrapError(ErrDecodeResponse, "decode gzip header", err)
-			return r.response, nil, r.err
-		}
-		defer gzReader.Close()
-
-		var buf bytes.Buffer
-		if _, err = io.Copy(&buf, gzReader); err != nil {
-			r.err = wrapError(ErrDecodeResponse, "decode gzip response", err)
-			return r.response, nil, r.err
-		}
-		bodyByte = buf.Bytes()
-	} else {
-		bodyByte, err = io.ReadAll(r.response.Body)
-		if err != nil {
-			if r.response.Uncompressed {
-				r.err = wrapError(ErrDecodeResponse, "read decompressed response body", err)
-			} else {
-				r.err = wrapError(ErrReadResponse, "read response body", err)
-			}
-			return r.response, nil, r.err
-		}
-	}
-
-	return r.response, bodyByte, nil
-}
-
-// EndFile 将已发送请求的响应保存为文件并关闭响应体，仅接受 200 OK。
-// savePath 目录须已存在，已有文件会被覆盖；saveFileName 为空时从 URL 获取文件名。
-func (r *Request) EndFile(savePath, saveFileName string) (resp *http.Response, err error) {
-	if err := r.beginRead("save response file"); err != nil {
-		return nil, err
-	}
-
-	defer func() {
-		_ = r.response.Body.Close()
-	}()
-
-	if r.response.StatusCode != http.StatusOK {
-		r.err = wrapError(ErrHTTPStatus, "save response file", fmt.Errorf("server responded with HTTP %d", r.response.StatusCode))
-		return r.response, r.err
-	}
-
-	if saveFileName == "" {
-		u, err := url.Parse(r.request.URL.String())
-		if err == nil {
-			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-			if len(parts) > 0 {
-				saveFileName = parts[len(parts)-1]
-			}
-		}
-		if saveFileName == "" {
-			saveFileName = "download.tmp"
-		}
-	}
-
-	destPath := filepath.Join(savePath, saveFileName)
-	file, err := os.Create(destPath)
-	if err != nil {
-		r.err = wrapError(ErrSaveFile, "create download file", err)
-		return r.response, r.err
-	}
-	defer func() {
-		if closeErr := file.Close(); err == nil && closeErr != nil {
-			r.err = wrapError(ErrSaveFile, "close download file", closeErr)
-			err = r.err
-		}
-	}()
-	_, err = io.Copy(file, r.response.Body)
-	if err != nil {
-		r.err = wrapError(ErrSaveFile, "write download file", err)
-		return r.response, r.err
-	}
-
-	return r.response, nil
 }
