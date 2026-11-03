@@ -3,6 +3,7 @@ package httpc
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -555,4 +556,166 @@ func TestResponseLimitPreservesFailureAtBoundary(t *testing.T) {
 	if errors.Is(err, ErrResponseTooLarge) || dst.String() != "abc" || source.closes != 1 {
 		t.Fatal("a failure during the boundary probe was lost or mistaken for overflow")
 	}
+}
+
+func TestEmptyGzipResponses(t *testing.T) {
+	for _, h2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("http2=%v", h2), func(t *testing.T) {
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Encoding", "gzip")
+				switch r.URL.Path {
+				case "/unknown":
+					w.WriteHeader(http.StatusBadRequest)
+					w.(http.Flusher).Flush()
+				case "/head":
+					w.Header().Set("Content-Length", "100")
+					w.WriteHeader(http.StatusOK)
+				case "/204":
+					w.WriteHeader(http.StatusNoContent)
+				case "/304":
+					w.WriteHeader(http.StatusNotModified)
+				case "/missing":
+					w.Header().Set("Content-Length", "20")
+					w.WriteHeader(http.StatusOK)
+				default:
+					w.Header().Set("Content-Length", "0")
+					status := http.StatusOK
+					if r.URL.Path == "/400" {
+						status = http.StatusBadRequest
+					}
+					w.WriteHeader(status)
+				}
+			}))
+			server.EnableHTTP2 = h2
+			if h2 {
+				server.StartTLS()
+			} else {
+				server.Start()
+			}
+			defer server.Close()
+			client := NewClient()
+			t.Cleanup(client.CloseIdleConnections)
+			if h2 {
+				pool := x509.NewCertPool()
+				pool.AddCert(server.Certificate())
+				client.CustomizeTransport(func(tr *http.Transport) { tr.TLSClientConfig.RootCAs = pool })
+			}
+			for _, tc := range []struct {
+				path, method string
+				status       int
+				truncated    bool
+			}{
+				{"/200", "GET", 200, false},
+				{"/400", "GET", 400, false},
+				{"/unknown", "GET", 400, false},
+				{"/head", "HEAD", 200, false},
+				{"/204", "GET", 204, false},
+				{"/304", "GET", 304, false},
+				{"/missing", "GET", 200, true},
+			} {
+				for _, explicit := range []bool{false, true} {
+					for _, method := range []string{"End", "EndByte", "EndTo", "EndFile"} {
+						t.Run(fmt.Sprintf("%s%s/explicit=%v", method, tc.path, explicit), func(t *testing.T) {
+							req := NewRequest(client).SetURL(server.URL + tc.path).SetMethod(tc.method).SetResponseLimit(1)
+							if explicit {
+								req.SetHeader("Accept-Encoding", "gzip")
+							}
+							req.Send()
+							var resp *http.Response
+							var err error
+							var content []byte
+							dst := &responseTestWriter{}
+							switch method {
+							case "End":
+								var text string
+								resp, text, err = req.End()
+								content = []byte(text)
+							case "EndByte":
+								resp, content, err = req.EndByte()
+							case "EndTo":
+								resp, err = req.EndTo(dst)
+								content = dst.data.Bytes()
+								if dst.closes != 0 {
+									t.Fatal("writer was closed")
+								}
+							case "EndFile":
+								dir := t.TempDir()
+								resp, err = req.EndFile(dir, "data")
+								var fileErr error
+								content, fileErr = os.ReadFile(filepath.Join(dir, "data"))
+								if tc.status == 200 && fileErr != nil {
+									t.Fatal(fileErr)
+								}
+								if tc.status != 200 && !os.IsNotExist(fileErr) {
+									t.Fatal("non-200 response created a file")
+								}
+							}
+							switch {
+							case method == "EndFile" && tc.status != 200:
+								assertError(t, err, ErrHTTPStatus, nil)
+								if errors.Is(err, ErrDecodeResponse) {
+									t.Fatal("empty error response was decoded before checking download status")
+								}
+							case tc.truncated:
+								assertError(t, err, ErrDecodeResponse, io.ErrUnexpectedEOF)
+							case err != nil:
+								t.Fatal(err)
+							}
+							if resp == nil || resp.StatusCode != tc.status || len(content) != 0 || req.GetError() != err {
+								t.Fatalf("response=%v error=%v content=%q", resp, err, content)
+							}
+							wantProto := 1
+							if h2 {
+								wantProto = 2
+							}
+							if resp.ProtoMajor != wantProto {
+								t.Fatalf("protocol=%s", resp.Proto)
+							}
+						})
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestGzipEmptyBodyAndTruncationRemainDistinct(t *testing.T) {
+	t.Run("empty source closes once", func(t *testing.T) {
+		req, source := responseRequest(t, strings.NewReader(""), "gzip")
+		req.response.StatusCode = http.StatusBadRequest
+		req.SetResponseLimit(1)
+		dst := &responseTestWriter{err: errors.New("must not write")}
+		resp, err := req.EndTo(dst)
+		if err != nil || resp.StatusCode != 400 || source.closes != 1 || dst.data.Len() != 0 || dst.closes != 0 {
+			t.Fatalf("empty response: error=%v closes=%d output=%q", err, source.closes, dst.data.String())
+		}
+		reads := source.reads
+		_, _, err = req.EndByte()
+		assertError(t, err, ErrInvalidRequest, nil)
+		if source.closes != 1 || source.reads != reads {
+			t.Fatal("empty response was read or closed again")
+		}
+	})
+	emptyMember := compressedResponse(t, "")
+	for cut := 1; cut < len(emptyMember); cut++ {
+		t.Run(fmt.Sprintf("truncated/%d", cut), func(t *testing.T) {
+			req, source := responseRequest(t, bytes.NewReader(emptyMember[:cut]), "gzip")
+			// Actual bytes take precedence over a custom Transport's incomplete metadata.
+			req.response.ContentLength = 0
+			_, _, err := req.EndByte()
+			assertError(t, err, ErrDecodeResponse, io.ErrUnexpectedEOF)
+			if source.closes != 1 {
+				t.Fatal("truncated body was not closed")
+			}
+		})
+	}
+	t.Run("wrapped EOF is a source failure", func(t *testing.T) {
+		cause := fmt.Errorf("source failed: %w", io.EOF)
+		req, source := responseRequest(t, failingReader{cause}, "gzip")
+		_, _, err := req.EndByte()
+		assertError(t, err, ErrDecodeResponse, cause)
+		if source.closes != 1 {
+			t.Fatal("failed source was not closed")
+		}
+	})
 }

@@ -128,6 +128,10 @@ func (r *Request) copyResponse(dst io.Writer) (int64, error) {
 		kind = ErrDecodeResponse
 	} else if strings.EqualFold(strings.TrimSpace(r.response.Header.Get("Content-Encoding")), "gzip") {
 		reader, err := gzip.NewReader(source)
+		// 初始化时正常 EOF 表示没有任何 gzip 数据；截断数据会返回其他错误。
+		if err == io.EOF {
+			return 0, nil
+		}
 		if err != nil {
 			return 0, wrapError(ErrDecodeResponse, "decode gzip header", err)
 		}

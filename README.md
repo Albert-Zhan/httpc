@@ -196,6 +196,8 @@ fmt.Println(resp.StatusCode, output.Len())
 
 gzip 解码识别单一的 `Content-Encoding: gzip`，不修改返回响应头。仅有 `Content-Type: application/gzip` 或 `.gz` 文件名不会触发解码；其他编码或编码组合按原始正文读取。
 
+带 gzip 头但实际没有正文的响应按空正文处理，保留原状态码；例如 `End()` 读取 400 空响应时返回状态码 400、空字符串和 nil 错误。非空 gzip 数据的截断、损坏及校验失败仍返回 `ErrDecodeResponse`；`EndFile` 仍要求 200 OK。
+
 ## Cookie 管理
 
 ### 当前请求的 Cookie
