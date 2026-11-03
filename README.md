@@ -253,8 +253,12 @@ if err != nil { return }
 defer raw.Close()
 client, err := tlsclient.New(raw)
 if err != nil { return }
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
 resp, text, err := httpc.NewRequest(client).
     SetURL("https://example.com").SetDebug(true).Send(ctx).End()
+if err != nil { fmt.Println(err); return }
+fmt.Println(resp.StatusCode, text)
 ```
 
 此段需导入适配模块、`github.com/bogdanfinn/tls-client`（别名 tls_client）及其 profiles 包。配置和完整可运行下载示例见 [适配器说明](adapters/tlsclient/README.md)。
