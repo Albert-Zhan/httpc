@@ -272,6 +272,38 @@ client.CustomizeTransport(func(tr *http.Transport) {
 
 代理地址支持 `http`、`https`、`socks5`、`socks5h`，需包含协议和主机，端口范围为 1–65535。非法配置会在发送时返回错误；设置合法代理或调用 `ClearProxy()` 可恢复请求。
 
+### Transport 扩展
+
+`WrapTransport` 包装当前发送链，可以接入签名、监控、限流或测试替身。先在 `main` 函数外定义包装器：
+
+```go
+type headerTransport struct {
+	Next http.RoundTripper
+}
+
+func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	changed := req.Clone(req.Context())
+	changed.Header.Set("X-Application", "demo")
+	return t.Next.RoundTrip(changed)
+}
+```
+
+创建客户端后、发送请求前注册：
+
+```go
+client.WrapTransport(func(next http.RoundTripper) http.RoundTripper {
+	return &headerTransport{Next: next}
+})
+```
+
+- 后注册的包装器在外层：先注册 A、再注册 B，发送顺序为 B、A、内置 Transport，返回顺序相反。
+- 包装器在配置时创建一次并供所有请求共享，内部状态需保证并发安全。修改请求时应克隆，并保留原 context，以保留取消、超时及追踪信息；不要提前消耗正文。替换正文时由包装器负责原正文的关闭、新正文的长度和重放能力。
+- `CustomizeTransport`、`SetProxy`、`SetSkipVerify` 继续配置内置 Transport。返回独立的 Transport 可接管发送，但其代理、TLS、连接池等由调用方配置；不委托 `next` 时不会自动使用内置 Transport 的配置。
+- `CloseIdleConnections()` 逐层调用已注册 Transport 的同名方法，并关闭内置连接池；中间层没有该方法也不会阻断后续层。向传入的 `next` 同步转发关闭时，不会重复关闭该注册层。外部实现若持有额外连接池，应提供 `CloseIdleConnections()` 并在其中处理这些资源；库不会调用可能中断活跃请求的 `Close()`。
+- 传入 nil 包装器、返回 nil 或带类型的 nil，都会使后续 `Send` 返回 `ErrInvalidRequest`；之前有效的发送链保留，后续合法 `WrapTransport` 调用可恢复。
+
+调试仍通过 `SetDebug(true)` 开启，注册扩展不会覆盖日志入口。包装器把修改后的请求传给 `next` 时，日志使用该请求的 URL、请求头和正文预览；直接返回新的标准 `*http.Transport` 也支持发送阶段采集。实际头信息依赖底层 `httptrace` 事件：自定义实现不提供事件或丢弃原 context 时，只能输出明确标注的请求快照，不能保证捕获其真实发送内容。默认不脱敏及按指定 key 脱敏的规则不变。
+
 ### context 超时与取消
 
 ```go
@@ -377,7 +409,7 @@ if err != nil {
 
 | 错误类别 | 含义 |
 | --- | --- |
-| `ErrInvalidRequest` | URL、参数、方法或调用状态无效，包括未发送就读取响应 |
+| `ErrInvalidRequest` | URL、参数、方法、Transport 包装配置或调用状态无效，包括未发送就读取响应 |
 | `ErrInvalidProxy` | 代理地址无效 |
 | `ErrRequestBody` | 请求体构建或编码失败 |
 | `ErrUploadFile` | 上传文件处理失败 |

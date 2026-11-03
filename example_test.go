@@ -45,3 +45,30 @@ func ExampleRequest_EndTo() {
 	// 200
 	// hello httpc
 }
+
+type appHeaderTransport struct{ next http.RoundTripper }
+
+func (t *appHeaderTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	changed := req.Clone(req.Context())
+	changed.Header.Set("X-Application", "demo")
+	return t.next.RoundTrip(changed)
+}
+
+func ExampleClient_WrapTransport() {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, r.Header.Get("X-Application"))
+	}))
+	defer server.Close()
+	client := httpc.NewClient().WrapTransport(func(next http.RoundTripper) http.RoundTripper {
+		return &appHeaderTransport{next: next}
+	})
+	defer client.CloseIdleConnections()
+	_, text, err := httpc.NewRequest(client).SetURL(server.URL).Send().End()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(text)
+	// Output:
+	// demo
+}

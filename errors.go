@@ -7,7 +7,7 @@ import (
 )
 
 var (
-	// ErrInvalidRequest 表示请求 URL、参数、方法或调用状态无效。
+	// ErrInvalidRequest 表示请求 URL、参数、方法、Transport 包装配置或调用状态无效。
 	ErrInvalidRequest = errors.New("httpc: invalid request")
 	// ErrInvalidProxy 表示代理地址配置无效。
 	ErrInvalidProxy = errors.New("httpc: invalid proxy")

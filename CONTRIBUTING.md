@@ -22,7 +22,7 @@ go tool cover -func=coverage.out
 
 | 文件 | 范围 |
 | --- | --- |
-| `client_test.go` | 代理、TLS、HTTP/2 和连接管理 |
+| `client_test.go` | 代理、TLS、HTTP/2、Transport 扩展和连接管理 |
 | `request_test.go` | URL、查询参数和发送状态 |
 | `request_header_test.go` | 请求头、默认 User-Agent 和 Cookie |
 | `request_body_test.go` | 正文发送、上传校验和重定向重放 |

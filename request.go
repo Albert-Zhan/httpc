@@ -160,6 +160,10 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 		r.err = wrapError(ErrInvalidRequest, "send request", fmt.Errorf("client is nil"))
 		return r
 	}
+	if r.httpc.transportErr != nil {
+		r.err = r.httpc.transportErr
+		return r
+	}
 	requestURL := r.url
 	if len(r.param) > 0 {
 		u, err := url.Parse(requestURL)

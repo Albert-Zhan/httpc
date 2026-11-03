@@ -8,9 +8,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -18,11 +20,14 @@ import (
 //
 // Deprecated: 请使用 Client。此名称在 v1.x 中保留，可能在未来主版本中移除。
 type HttpClient struct {
-	client    *http.Client
-	transport *http.Transport
-	debugMu   sync.Mutex
-	debugOut  io.Writer
-	debugKeys map[string]struct{}
+	client       *http.Client
+	transport    *http.Transport
+	debugMu      sync.Mutex
+	debugOut     io.Writer
+	debugKeys    map[string]struct{}
+	transportErr error
+	closeMu      sync.Mutex
+	closing      atomic.Bool
 }
 
 // Client 提供 HTTP 客户端配置和连接管理，配置完成后可并发复用。
@@ -93,12 +98,56 @@ func (c *HttpClient) AddDebugSensitiveFields(names ...string) *Client {
 }
 
 // CloseIdleConnections 关闭当前空闲连接，不中断正在使用的连接，也不禁止后续请求。
+// 包装后的各层分别处理；外部实现持有的连接池需通过同名方法释放。
 // 可在客户端被并发使用时调用。
 func (c *HttpClient) CloseIdleConnections() {
+	if node, ok := c.client.Transport.(*transportNode); ok && node.owner == c {
+		c.closeTransportChain(node)
+		return
+	}
 	c.client.CloseIdleConnections()
+	if c.client.Transport != c.transport {
+		c.transport.CloseIdleConnections()
+	}
 }
 
-// CustomizeTransport 在发送请求前配置底层 Transport。
+// WrapTransport 包装当前发送链，后注册的包装器在外层；应在发送请求前配置。
+// 包装器及其内部状态须支持并发调用；修改请求时应克隆并保留原 context。
+// 返回独立 Transport 可接管发送，其连接配置由调用方负责。
+// nil 包装器或 nil 返回值（含带类型的 nil）会使 Send 返回 ErrInvalidRequest，后续合法调用可恢复。
+func (c *HttpClient) WrapTransport(wrap func(http.RoundTripper) http.RoundTripper) *Client {
+	if wrap == nil {
+		c.transportErr = wrapError(ErrInvalidRequest, "configure transport wrapper", fmt.Errorf("wrapper is nil"))
+		return c
+	}
+	previous, ok := c.client.Transport.(*transportNode)
+	if !ok || previous.owner != c {
+		previous = &transportNode{owner: c, transport: c.client.Transport}
+	}
+	wrapped := wrap(previous)
+	if isNilTransport(wrapped) {
+		c.transportErr = wrapError(ErrInvalidRequest, "configure transport wrapper", fmt.Errorf("wrapper returned a nil transport"))
+		return c
+	}
+	c.client.Transport = &transportNode{owner: c, transport: wrapped, previous: previous}
+	c.transportErr = nil
+	return c
+}
+
+func isNilTransport(tr http.RoundTripper) bool {
+	if tr == nil {
+		return true
+	}
+	value := reflect.ValueOf(tr)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return value.IsNil()
+	}
+	return false
+}
+
+// CustomizeTransport 在发送请求前配置内置 Transport。
+// 包装器通过 next 委托发送时继续生效；独立替换的 Transport 由调用方配置。
 func (c *HttpClient) CustomizeTransport(f func(tr *http.Transport)) *Client {
 	f(c.transport)
 	return c

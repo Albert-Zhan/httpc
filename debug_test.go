@@ -214,7 +214,7 @@ func TestConcurrentRequestsShareDebugOutput(t *testing.T) {
 	}))
 	defer server.Close()
 	var logs bytes.Buffer // The shared client must serialize access to this non-thread-safe writer.
-	client := NewClient().SetDebugOutput(&logs).AddDebugSensitiveFields("X-Token")
+	client := NewClient().SetDebugOutput(&logs).AddDebugSensitiveFields("X-Token").WrapTransport(func(next http.RoundTripper) http.RoundTripper { return testRoundTripper(next.RoundTrip) })
 	t.Cleanup(client.CloseIdleConnections)
 	const count = 20
 	var workers sync.WaitGroup
@@ -416,6 +416,7 @@ func TestDebugCapturesTransportHeaders(t *testing.T) {
 				pool.AddCert(server.Certificate())
 				client.CustomizeTransport(func(tr *http.Transport) { tr.TLSClientConfig.RootCAs = pool })
 			}
+			client.WrapTransport(func(http.RoundTripper) http.RoundTripper { return client.transport.Clone() })
 			jar, err := cookiejar.New(nil)
 			if err != nil {
 				t.Fatal(err)
@@ -740,11 +741,120 @@ func TestDebugPreservesCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 	var logs bytes.Buffer
-	client := NewClient().SetDebugOutput(&logs)
+	client := NewClient().SetDebugOutput(&logs).WrapTransport(func(next http.RoundTripper) http.RoundTripper { return testRoundTripper(next.RoundTrip) })
 	t.Cleanup(client.CloseIdleConnections)
 	_, _, err := NewRequest(client).SetURL(server.URL).SetDebug(true).Send(ctx).End()
 	assertError(t, err, ErrSendRequest, context.Canceled)
 	if len(debugRecords(t, logs.String())) != 1 {
 		t.Fatal("cancelled request record missing")
+	}
+}
+
+func TestDebugCapturesRewrittenWrappedRequest(t *testing.T) {
+	type observation struct{ path, query, method, body, signature string }
+	observed := make(chan observation, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		content, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Error(err)
+		}
+		observed <- observation{r.URL.Path, r.URL.Query().Get("token"), r.Method, string(content), r.Header.Get("X-Signature")}
+		io.WriteString(w, "ok")
+	}))
+	defer server.Close()
+	var logs bytes.Buffer
+	client := NewClient().SetDebugOutput(&logs).AddDebugSensitiveFields("token", "password", "X-Signature")
+	t.Cleanup(client.CloseIdleConnections)
+	const payload = `{"keep":"wrapped-body","password":"body-secret"}`
+	client.WrapTransport(func(next http.RoundTripper) http.RoundTripper {
+		return testRoundTripper(func(req *http.Request) (*http.Response, error) {
+			changed := req.Clone(req.Context())
+			changed.URL.Path = "/wrapped"
+			changed.URL.RawQuery = "token=query-secret"
+			changed.Method = "POST"
+			if changed.Body != nil {
+				_ = changed.Body.Close()
+			}
+			changed.Body = io.NopCloser(strings.NewReader(payload))
+			changed.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(payload)), nil }
+			changed.ContentLength = int64(len(payload))
+			changed.Header.Set("Content-Type", "application/json")
+			changed.Header.Set("X-Signature", "signature-secret")
+			return next.RoundTrip(changed)
+		})
+	}).WrapTransport(func(next http.RoundTripper) http.RoundTripper {
+		return testRoundTripper(func(req *http.Request) (*http.Response, error) {
+			changed := req.Clone(req.Context())
+			changed.Header.Set("X-Outer", "visible")
+			return next.RoundTrip(changed)
+		})
+	})
+	req := NewRequest(client).SetURL(server.URL + "/original").SetBody(rawDebugBody("original-body", body.Text)).SetDebug(true)
+	_, text, err := req.Send().End()
+	if err != nil || text != "ok" {
+		t.Fatalf("body=%q error=%v", text, err)
+	}
+	got := <-observed
+	if got.path != "/wrapped" || got.query != "query-secret" || got.method != "POST" || got.body != payload || got.signature != "signature-secret" {
+		t.Fatalf("wrong wrapped request: %+v", got)
+	}
+	records := debugRecords(t, logs.String())
+	if len(records) != 1 {
+		t.Fatalf("duplicate logs for wrapper layers: %v", records)
+	}
+	record := records[0]
+	if record["Header-Source"] != "transport" || record["Request"] != "POST "+server.URL+"/wrapped?token=%5BREDACTED%5D" ||
+		record["Body-Preview"] != `{"keep":"wrapped-body","password":"[REDACTED]"}` {
+		t.Fatalf("log shows pre-wrapper request: %v", record)
+	}
+	headers := debugRecordedHeaders(t, record)
+	if headers.Get("X-Signature") != debugRedacted || headers.Get("X-Outer") != "visible" || headers.Get("Content-Length") != fmt.Sprint(len(payload)) {
+		t.Fatalf("wrong wrapped headers: %v", headers)
+	}
+	for _, secret := range []string{"query-secret", "body-secret", "signature-secret", "original-body"} {
+		if strings.Contains(logs.String(), secret) {
+			t.Errorf("incorrect preview or redaction: %s", secret)
+		}
+	}
+	if req.request.URL.Path != "/original" || req.header.Get("X-Signature") != "" {
+		t.Fatal("wrapper changed the original builder")
+	}
+}
+
+func TestDebugWrapTransportWithoutTraceKeepsSnapshot(t *testing.T) {
+	var logs bytes.Buffer
+	client := NewClient().SetDebugOutput(&logs).WrapTransport(func(http.RoundTripper) http.RoundTripper {
+		return testRoundTripper(func(req *http.Request) (*http.Response, error) {
+			return &http.Response{StatusCode: 200, Proto: "HTTP/1.1", Header: make(http.Header), Body: http.NoBody}, nil
+		})
+	})
+	t.Cleanup(client.CloseIdleConnections)
+	_, _, err := NewRequest(client).SetURL("http://example.test/").SetHeader("X-Visible", "value").SetDebug(true).Send().End()
+	if err != nil {
+		t.Fatal(err)
+	}
+	records := debugRecords(t, logs.String())
+	if len(records) != 1 || records[0]["Header-Source"] != "request snapshot" || records[0]["Write"] != "unobserved" || debugRecordedHeaders(t, records[0]).Get("X-Visible") != "value" {
+		t.Fatalf("opaque transport log missing or misrepresented: %v", records)
+	}
+}
+
+func TestDebugWrapTransportWithDroppedContextIsUnobserved(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "sent") }))
+	defer server.Close()
+	var logs bytes.Buffer
+	client := NewClient().SetDebugOutput(&logs).WrapTransport(func(next http.RoundTripper) http.RoundTripper {
+		return testRoundTripper(func(req *http.Request) (*http.Response, error) {
+			return next.RoundTrip(req.WithContext(context.Background()))
+		})
+	})
+	t.Cleanup(client.CloseIdleConnections)
+	_, text, err := NewRequest(client).SetURL(server.URL).SetDebug(true).Send().End()
+	if err != nil || text != "sent" {
+		t.Fatalf("body=%q error=%v", text, err)
+	}
+	records := debugRecords(t, logs.String())
+	if len(records) != 1 || records[0]["Header-Source"] != "request snapshot" || records[0]["Write"] != "unobserved" {
+		t.Fatalf("missing trace was represented as actual capture: %v", records)
 	}
 }

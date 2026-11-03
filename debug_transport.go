@@ -1,6 +1,7 @@
 package httpc
 
 import (
+	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
@@ -10,6 +11,8 @@ import (
 	"sync"
 	"sync/atomic"
 )
+
+type debugTraceKey struct{}
 
 var debugRequestID atomic.Uint64
 
@@ -21,6 +24,8 @@ type debugTransport struct {
 }
 
 type debugAttempt struct {
+	request     *http.Request
+	preview     string
 	headers     http.Header
 	protocol    string
 	started     bool
@@ -31,14 +36,31 @@ type debugAttempt struct {
 }
 
 type debugTrace struct {
+	client   *Client
+	pending  *http.Request
 	mu       sync.Mutex
 	closed   bool
 	attempts []*debugAttempt
 }
 
+func (d *debugTrace) observe(req *http.Request) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.closed {
+		d.pending = req.Clone(req.Context())
+	}
+}
+
+func (d *debugTrace) newAttempt() *debugAttempt {
+	d.client.debugMu.Lock()
+	preview := d.client.debugBody(d.pending)
+	d.client.debugMu.Unlock()
+	return &debugAttempt{headers: make(http.Header), request: d.pending, preview: preview}
+}
+
 func (d *debugTrace) current() *debugAttempt {
 	if len(d.attempts) == 0 {
-		d.attempts = append(d.attempts, &debugAttempt{headers: make(http.Header)})
+		d.attempts = append(d.attempts, d.newAttempt())
 	}
 	return d.attempts[len(d.attempts)-1]
 }
@@ -53,7 +75,7 @@ func (d *debugTrace) hooks() *httptrace.ClientTrace {
 			}
 			a := d.current()
 			if a.started || a.connected || a.done {
-				d.attempts = append(d.attempts, &debugAttempt{headers: make(http.Header)})
+				d.attempts = append(d.attempts, d.newAttempt())
 				a = d.current()
 			}
 			a.started = true
@@ -66,7 +88,7 @@ func (d *debugTrace) hooks() *httptrace.ClientTrace {
 			}
 			a := d.current()
 			if a.connected || a.done {
-				d.attempts = append(d.attempts, &debugAttempt{headers: make(http.Header)})
+				d.attempts = append(d.attempts, d.newAttempt())
 				a = d.current()
 			}
 			a.connected = true
@@ -83,7 +105,7 @@ func (d *debugTrace) hooks() *httptrace.ClientTrace {
 			}
 			a := d.current()
 			if a.done {
-				d.attempts = append(d.attempts, &debugAttempt{headers: make(http.Header)})
+				d.attempts = append(d.attempts, d.newAttempt())
 				a = d.current()
 			}
 			a.headers[name] = append(a.headers[name], values...)
@@ -99,7 +121,7 @@ func (d *debugTrace) hooks() *httptrace.ClientTrace {
 			}
 			a := d.current()
 			if a.done {
-				d.attempts = append(d.attempts, &debugAttempt{headers: make(http.Header)})
+				d.attempts = append(d.attempts, d.newAttempt())
 				a = d.current()
 			}
 			a.done = true
@@ -126,11 +148,10 @@ func (c *HttpClient) debugEnabled() bool {
 
 func (t *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	hop := t.hop.Add(1)
-	t.client.debugMu.Lock()
-	preview := t.client.debugBody(req)
-	t.client.debugMu.Unlock()
-	state := &debugTrace{}
-	traced := req.WithContext(httptrace.WithClientTrace(req.Context(), state.hooks()))
+	state := &debugTrace{client: t.client}
+	state.observe(req)
+	ctx := context.WithValue(req.Context(), debugTraceKey{}, state)
+	traced := req.WithContext(httptrace.WithClientTrace(ctx, state.hooks()))
 	next := t.next
 	if next == nil {
 		next = http.DefaultTransport
@@ -161,17 +182,18 @@ func (t *debugTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	state.mu.Unlock()
 	for i, a := range attempts {
-		t.client.writeDebugAttempt(req, t.id, hop, i+1, a, preview)
+		t.client.writeDebugAttempt(t.id, hop, i+1, a)
 	}
 	return resp, err
 }
 
-func (c *HttpClient) writeDebugAttempt(req *http.Request, id, hop uint64, attempt int, a *debugAttempt, preview string) {
+func (c *HttpClient) writeDebugAttempt(id, hop uint64, attempt int, a *debugAttempt) {
 	c.debugMu.Lock()
 	defer c.debugMu.Unlock()
 	if c.debugOut == nil || c.debugOut == io.Discard {
 		return
 	}
+	req := a.request
 	headers := a.headers
 	source := "transport"
 	if len(headers) == 0 {
@@ -204,7 +226,7 @@ func (c *HttpClient) writeDebugAttempt(req *http.Request, id, hop uint64, attemp
 	fmt.Fprintln(&record, strings.Repeat("-", 67))
 	fmt.Fprintf(&record, "Request-ID: %d\nHop: %d\nAttempt: %d\n", id, hop, attempt)
 	fmt.Fprintf(&record, "Request: %s %s\nProtocol: %s\nHeader-Source: %s\nHeader: %s\nCookies: %s\nBody-Preview: %s\nWrite: %s\n",
-		req.Method, c.debugURL(&requestURL), a.protocol, source, debugJSON(c.debugHeaders(headers)), debugJSON(cookies), preview, a.write)
+		req.Method, c.debugURL(&requestURL), a.protocol, source, debugJSON(c.debugHeaders(headers)), debugJSON(cookies), a.preview, a.write)
 	fmt.Fprintln(&record, strings.Repeat("-", 67))
 	_, _ = io.WriteString(c.debugOut, record.String())
 }
