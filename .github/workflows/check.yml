@@ -25,7 +25,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Avoid hosted macOS arm64 allocation failures; keep macOS tests on x64.
+        os: [ubuntu-latest, windows-latest, macos-26-intel]
     defaults:
       run:
         shell: bash
