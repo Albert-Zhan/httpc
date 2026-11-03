@@ -27,7 +27,7 @@ go tool cover -func=coverage.out
 | `request_header_test.go` | 请求头、默认 User-Agent 和 Cookie |
 | `request_body_test.go` | 正文发送、上传校验和重定向重放 |
 | `response_test.go` | 响应读取、Writer 输出、大小限制、解压、下载和读取状态 |
-| `debug_test.go` | 调试输出、脱敏和日志并发写入 |
+| `debug_test.go` | 发送阶段日志、重定向与重试、脱敏和日志并发写入 |
 | `test_helpers_test.go` | 多个测试文件共用的 Transport、读写计数器和错误断言 |
 | `api_compat_test.go`、`example_test.go` | 使用 `httpc_test` 包验证公共接口兼容性和可执行示例 |
 | `body/*_test.go` | 各类正文的编码和构建错误 |

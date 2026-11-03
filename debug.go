@@ -90,7 +90,7 @@ func (c *HttpClient) debugHeaders(headers http.Header) http.Header {
 		return copyHeaders
 	}
 	for name, values := range copyHeaders {
-		if c.sensitiveDebugKey(name) {
+		if c.sensitiveDebugKey(name) || (name == ":authority" && c.sensitiveDebugKey("Host")) {
 			copyHeaders[name] = []string{debugRedacted}
 		} else if strings.EqualFold(name, "Cookie") {
 			for i, value := range values {
@@ -101,6 +101,14 @@ func (c *HttpClient) debugHeaders(headers http.Header) http.Header {
 					}
 				}
 				values[i] = strings.Join(parts, ";")
+			}
+		} else if name == ":path" {
+			for i, value := range values {
+				if u, err := url.Parse(value); err == nil {
+					values[i] = c.debugURL(u)
+				} else {
+					values[i] = "[path omitted]"
+				}
 			}
 		} else if strings.EqualFold(name, "Referer") {
 			for i, value := range values {
@@ -244,31 +252,4 @@ func (c *HttpClient) debugBody(req *http.Request) string {
 		}
 		return string(redacted)
 	}
-}
-
-func (r *Request) log() {
-	if !r.debug {
-		return
-	}
-	c := r.httpc
-	c.debugMu.Lock()
-	defer c.debugMu.Unlock()
-	if c.debugOut == nil || c.debugOut == io.Discard {
-		return
-	}
-	cookies := make(map[string]string)
-	for _, cookie := range r.request.Cookies() {
-		cookies[cookie.Name] = cookie.Value
-		if c.sensitiveDebugKey("Cookie") || c.sensitiveDebugKey(cookie.Name) {
-			cookies[cookie.Name] = debugRedacted
-		}
-	}
-	var record strings.Builder
-	fmt.Fprintln(&record, "[httpc Debug]")
-	fmt.Fprintln(&record, "-------------------------------------------------------------------")
-	fmt.Fprintf(&record, "Request: %s %s\nHeader: %s\nCookies: %s\nBody: %s\n",
-		r.request.Method, c.debugURL(r.request.URL), debugJSON(c.debugHeaders(r.request.Header)),
-		debugJSON(cookies), c.debugBody(r.request))
-	fmt.Fprintln(&record, "-------------------------------------------------------------------")
-	_, _ = io.WriteString(c.debugOut, record.String())
 }

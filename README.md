@@ -310,22 +310,43 @@ if err != nil {
 
 - 脱敏仅作用于显式指定的 key，忽略大小写和分隔符；`token` 不会匹配 `access_token`。可多次调用以追加字段。
 - 规则覆盖请求头、查询参数、JSON 和表单字段；JSON 按字段递归处理。指定 `Cookie` 隐藏全部 Cookie 值，指定 Cookie 名称则只隐藏该项。
-- URL 用户名、密码、完整用户凭据和 fragment 分别使用 `username`、`password`、`userinfo`、`fragment` 指定；`filename` 用于 multipart 文件名。
-- 日志只读取最多 64 KiB 的可重放正文副本。过大、不可重放或二进制正文会省略；multipart 展示字段及文件名，不输出文件内容。启用字段脱敏后，无法解析或不支持过滤的正文会省略。
+- `Referer` 等 URL 字段中的用户名、密码、完整用户凭据和 fragment 分别使用 `username`、`password`、`userinfo`、`fragment` 指定；`filename` 用于 multipart 文件名。
+- 请求头在 Transport 写出阶段采集，包含自动添加的 Cookie、gzip、Host、正文长度和传输编码；HTTP/2 展示实际逻辑头字段及伪头。
+- 同一次 `Send()` 使用相同的 `Request-ID`；`Hop` 区分重定向的各跳，`Attempt` 区分该跳内的连接及发送尝试。底层重试由标准库决定，日志不额外重试请求。
+- 请求 URL 不包含不会随请求目标发送的用户凭据和 fragment；URL 凭据产生的 Authorization 按请求头规则展示或脱敏。HTTP/2 的 `:path` 同样过滤查询参数，指定 `Host` 也会过滤 `:authority`。
+- `Body-Preview` 只预览不超过 64 KiB 的可重放正文副本，不读取实际待发送的正文。过大、不可重放或二进制正文会省略；multipart 展示字段及文件名，不输出文件内容。启用字段脱敏后，无法解析或不支持过滤的正文会省略。
 
 例如，配置上述字段后，一次登录请求的日志可显示为：
 
 ```text
 [httpc Debug]
 -------------------------------------------------------------------
+Request-ID: 12
+Hop: 1
+Attempt: 1
 Request: POST https://example.com/login?token=%5BREDACTED%5D
-Header: {"Authorization":["[REDACTED]"],"Content-Type":["application/json"],"Cookie":["[REDACTED]"],"User-Agent":["httpc/1.5.1-dev"]}
+Protocol: HTTP/1.1
+Header-Source: transport
+Header: {"Accept-Encoding":["gzip"],"Authorization":["[REDACTED]"],"Content-Length":["43"],"Content-Type":["application/json"],"Cookie":["[REDACTED]"],"Host":["example.com"],"User-Agent":["httpc/1.5.1-dev"]}
 Cookies: {"session":"[REDACTED]"}
-Body: {"password":"[REDACTED]","username":"alice"}
+Body-Preview: {"password":"[REDACTED]","username":"alice"}
+Write: completed
 -------------------------------------------------------------------
 ```
 
 `[REDACTED]` 在 URL 中按百分号编码显示。脱敏不修改实际请求，也不修改返回的错误内容。
+
+`Header-Source: transport` 表示采集到 Transport 写出的字段，写入失败时可能只有部分字段。没有提供追踪事件的自定义 Transport，或尚未写出头的失败请求，显示 `Header-Source: request snapshot`；快照不代表实际发送内容。
+
+| Write | 含义 |
+| --- | --- |
+| `completed` | 观测到请求写入完成 |
+| `failed` | 观测到请求写入失败 |
+| `not_started` | 获取连接失败，尚未进入请求写入阶段 |
+| `unconfirmed` | 观测到连接或头信息，但返回时尚未确认写入结果 |
+| `unobserved` | 没有获得足以判断发送状态的追踪事件 |
+
+头字段回调发生时数据可能仍在缓冲区；`completed` 也不保证服务端应用已处理请求。正文预览不代表所有字节已发送。日志在每一跳的 Transport 返回时输出，不等待迟到的事件，也不会把它们继续写入已输出记录；调用方原有的 `httptrace` 回调仍然保留。
 
 日志按完整记录串行写入同一客户端的 Writer；多个客户端共享 Writer 时，调用方需保证其并发安全。Writer 由调用方关闭。`SetDebugOutput(nil)` 或传入 `io.Discard` 可丢弃日志，日志写入失败不影响 HTTP 请求。
 

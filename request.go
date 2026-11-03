@@ -121,7 +121,7 @@ func (r *Request) SetCookies(cookies *[]*http.Cookie) *Request {
 	return r
 }
 
-// SetDebug 设置是否输出请求日志，默认关闭；开启后默认不脱敏。
+// SetDebug 设置是否输出发送阶段请求日志，默认关闭；开启后默认不脱敏。
 // 通过 Client.SetDebugOutput 和 Client.AddDebugSensitiveFields 配置输出和脱敏。
 func (r *Request) SetDebug(d bool) *Request {
 	r.debug = d
@@ -239,9 +239,14 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 		r.request.AddCookie(v)
 	}
 
-	r.log()
-
-	r.response, r.err = r.httpc.client.Do(r.request)
+	client := r.httpc.client
+	if r.debug && r.httpc.debugEnabled() {
+		// 请求私有的客户端副本共享连接池、Jar 和策略，避免修改并发使用的客户端。
+		traced := *client
+		traced.Transport = &debugTransport{next: client.Transport, client: r.httpc, id: debugRequestID.Add(1)}
+		client = &traced
+	}
+	r.response, r.err = client.Do(r.request)
 	if r.err != nil {
 		r.err = wrapError(ErrSendRequest, "send request", r.err)
 		return r
