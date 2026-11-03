@@ -17,6 +17,37 @@ import (
 	"github.com/Albert-Zhan/httpc/body"
 )
 
+func TestUserAgentInDebugLog(t *testing.T) {
+	for _, redact := range []bool{false, true} {
+		t.Run(fmt.Sprint(redact), func(t *testing.T) {
+			var logs bytes.Buffer
+			client := NewClient().SetDebugOutput(&logs)
+			if redact {
+				client.AddDebugSensitiveFields("User-Agent")
+			}
+			client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
+				if r.UserAgent() != DefaultUserAgent {
+					t.Fatal("logging changed the sent User-Agent")
+				}
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ok"))}, nil
+			})
+			if _, _, err := NewRequest(client).SetURL("http://example.test/").SetDebug(true).Send().End(); err != nil {
+				t.Fatal(err)
+			}
+			want := DefaultUserAgent
+			if redact {
+				want = debugRedacted
+				if strings.Contains(logs.String(), DefaultUserAgent) {
+					t.Fatal("configured UA redaction leaked the default value")
+				}
+			}
+			if !strings.Contains(logs.String(), `"User-Agent":["`+want+`"]`) {
+				t.Fatalf("User-Agent missing from debug log: %s", logs.String())
+			}
+		})
+	}
+}
+
 func rawDebugBody(data, contentType string) body.Body {
 	b := body.NewRawData()
 	b.SetData(data, contentType)
@@ -54,7 +85,7 @@ func TestDebugRedactsWithoutChangingRequests(t *testing.T) {
 				"Business-Credential", "username", "password", "fragment", "access_token", "token",
 				"Authorization", "Proxy-Authorization", "X-API-Key", "Cookie", "api_key",
 			)
-			defer client.CloseIdleConnections()
+			t.Cleanup(client.CloseIdleConnections)
 			u, _ := url.Parse(server.URL)
 			u.User = url.UserPassword("private-user", "private-password")
 			u.RawQuery = "access_token=query-secret&keep=visible-query&business_credential=query-business-secret"
@@ -99,7 +130,8 @@ type debugBodyProbe struct {
 }
 
 func (b debugBodyProbe) GetContentType() string { return "application/json" }
-func (b debugBodyProbe) Encode() io.Reader      { return b.reader }
+
+func (b debugBodyProbe) Encode() io.Reader { return b.reader }
 
 func TestDebugOmitsUnsafeBodies(t *testing.T) {
 	for _, tc := range []struct {
@@ -121,7 +153,7 @@ func TestDebugOmitsUnsafeBodies(t *testing.T) {
 			defer server.Close()
 			var logs bytes.Buffer
 			client := NewClient().SetDebugOutput(&logs).AddDebugSensitiveFields("password")
-			defer client.CloseIdleConnections()
+			t.Cleanup(client.CloseIdleConnections)
 			_, text, err := NewRequest(client).SetURL(server.URL).SetMethod("post").SetBody(tc.body).SetDebug(true).Send().End()
 			if err != nil || !strings.Contains(text, "body-secret") {
 				t.Fatalf("body was changed or consumed by debug logging: %q, %v", text, err)
@@ -157,7 +189,7 @@ func TestDebugOutputDoesNotAffectRequests(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			client := NewClient().SetDebugOutput(tc.writer)
-			defer client.CloseIdleConnections()
+			t.Cleanup(client.CloseIdleConnections)
 			_, text, err := NewRequest(client).SetURL(server.URL).SetDebug(tc.debug).Send().End()
 			if err != nil || text != "ok" {
 				t.Fatalf("debug output affected request: %q, %v", text, err)
@@ -176,7 +208,7 @@ func TestConcurrentRequestsShareDebugOutput(t *testing.T) {
 	defer server.Close()
 	var logs bytes.Buffer // The shared client must serialize access to this non-thread-safe writer.
 	client := NewClient().SetDebugOutput(&logs).AddDebugSensitiveFields("X-Token")
-	defer client.CloseIdleConnections()
+	t.Cleanup(client.CloseIdleConnections)
 	const count = 20
 	var workers sync.WaitGroup
 	errs := make(chan error, count)

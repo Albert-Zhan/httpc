@@ -1,11 +1,17 @@
 package httpc
 
 import (
+	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
+	"log"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -22,7 +28,7 @@ func TestInvalidProxyBlocksRequests(t *testing.T) {
 	}))
 	defer proxy.Close()
 	client := NewClient()
-	defer client.transport.CloseIdleConnections()
+	t.Cleanup(client.CloseIdleConnections)
 	for _, address := range []string{
 		"://bad-proxy", "", "127.0.0.1:8080", "http:///missing-host",
 		"ftp://localhost:8080", "http://localhost:invalid", "http://localhost:0",
@@ -55,7 +61,7 @@ func TestClientNegotiatesHTTP2(t *testing.T) {
 	client := NewClient().CustomizeTransport(func(tr *http.Transport) {
 		tr.TLSClientConfig.RootCAs = pool
 	})
-	defer client.transport.CloseIdleConnections()
+	t.Cleanup(client.CloseIdleConnections)
 	resp, _, err := NewRequest(client).SetURL(server.URL).Send().End()
 	if err != nil {
 		t.Fatal(err)
@@ -85,7 +91,7 @@ func TestProxyRecovery(t *testing.T) {
 	}))
 	defer proxy.Close()
 	client := NewClient()
-	defer client.transport.CloseIdleConnections()
+	t.Cleanup(client.CloseIdleConnections)
 	for _, tc := range []struct {
 		name, want string
 		configure  func()
@@ -116,5 +122,128 @@ func TestSupportedProxyAddresses(t *testing.T) {
 				t.Fatalf("proxy = %v, error = %v, want %s", u, err, address)
 			}
 		})
+	}
+}
+
+func TestSetSkipVerifyAfterNilTLSConfig(t *testing.T) {
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "ok")
+	}))
+	server.Config.ErrorLog = log.New(io.Discard, "", 0)
+	server.StartTLS()
+	defer server.Close()
+	for _, skip := range []bool{false, true} {
+		client := NewClient().CustomizeTransport(func(tr *http.Transport) { tr.TLSClientConfig = nil })
+		if client.SetSkipVerify(skip) != client {
+			t.Fatal("SetSkipVerify changed the client instance")
+		}
+		t.Cleanup(client.CloseIdleConnections)
+		if client.transport.TLSClientConfig.MinVersion != tls.VersionTLS12 {
+			t.Fatal("initializing TLS configuration lost the minimum TLS version")
+		}
+		_, text, err := NewRequest(client).SetURL(server.URL).Send().End()
+		if skip {
+			if err != nil || text != "ok" {
+				t.Fatalf("skip verification: body=%q error=%v", text, err)
+			}
+		} else {
+			var unknownAuthority x509.UnknownAuthorityError
+			if !errors.Is(err, ErrSendRequest) || !errors.As(err, &unknownAuthority) {
+				t.Fatalf("certificate verification was not enforced: %v", err)
+			}
+		}
+	}
+}
+
+func TestSetSkipVerifyPreservesCustomTLSConfig(t *testing.T) {
+	config := &tls.Config{MinVersion: tls.VersionTLS13, ServerName: "custom.example"}
+	client := NewClient().CustomizeTransport(func(tr *http.Transport) { tr.TLSClientConfig = config })
+	for _, skip := range []bool{true, false} {
+		client.SetSkipVerify(skip)
+		if client.transport.TLSClientConfig != config || config.MinVersion != tls.VersionTLS13 ||
+			config.ServerName != "custom.example" || config.InsecureSkipVerify != skip {
+			t.Fatal("SetSkipVerify replaced or reset custom TLS configuration")
+		}
+	}
+}
+
+type trackedClientConn struct {
+	net.Conn
+	closed chan struct{}
+	once   sync.Once
+}
+
+func (c *trackedClientConn) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() { close(c.closed) })
+	return err
+}
+
+func TestCloseIdleConnectionsKeepsClientUsable(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/active" {
+			close(started)
+			<-release
+		}
+		io.WriteString(w, "ok")
+	}))
+	defer server.Close()
+	defer releaseOnce.Do(func() { close(release) })
+	connections := make(chan *trackedClientConn, 4)
+	client := NewClient().CustomizeTransport(func(tr *http.Transport) {
+		tr.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, err := (&net.Dialer{}).DialContext(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+			tracked := &trackedClientConn{Conn: conn, closed: make(chan struct{})}
+			connections <- tracked
+			return tracked, nil
+		}
+	})
+	t.Cleanup(client.CloseIdleConnections)
+	if _, _, err := NewRequest(client).SetURL(server.URL).Send().End(); err != nil {
+		t.Fatal(err)
+	}
+	idle := <-connections
+	client.CloseIdleConnections()
+	select {
+	case <-idle.closed:
+	case <-time.After(3 * time.Second):
+		t.Fatal("idle connection was not closed")
+	}
+	finished := make(chan error, 1)
+	go func() {
+		_, text, err := NewRequest(client).SetURL(server.URL + "/active").Send().End()
+		if err == nil && text != "ok" {
+			err = fmt.Errorf("unexpected body %q", text)
+		}
+		finished <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("active request did not start")
+	}
+	active := <-connections
+	client.CloseIdleConnections()
+	select {
+	case <-active.closed:
+		t.Fatal("active connection was interrupted")
+	default:
+	}
+	releaseOnce.Do(func() { close(release) })
+	select {
+	case err := <-finished:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("active request did not finish")
+	}
+	if _, _, err := NewRequest(client).SetURL(server.URL + "/after").Send().End(); err != nil {
+		t.Fatalf("client could not send another request: %v", err)
 	}
 }

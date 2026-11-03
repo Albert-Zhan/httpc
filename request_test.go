@@ -1,13 +1,12 @@
 package httpc
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
-	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -19,7 +18,7 @@ func TestSendMergesQueryParameters(t *testing.T) {
 	}))
 	defer server.Close()
 	client := NewClient()
-	defer client.transport.CloseIdleConnections()
+	t.Cleanup(client.CloseIdleConnections)
 
 	for _, tc := range []struct {
 		name, suffix string
@@ -62,57 +61,64 @@ func TestSendRejectsMalformedQuery(t *testing.T) {
 	}
 }
 
-type testRoundTripper func(*http.Request) (*http.Response, error)
-
-func (f testRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
-
-type trackedResponseBody struct {
-	io.Reader
-	closed bool
-}
-
-func (b *trackedResponseBody) Close() error {
-	b.closed = true
-	return nil
-}
-
-func TestEndFileClosesResponseBody(t *testing.T) {
-	for _, tc := range []struct {
-		name       string
-		status     int
-		missingDir bool
-	}{
-		{name: "not found", status: http.StatusNotFound},
-		{name: "server error", status: http.StatusInternalServerError},
-		{name: "success", status: http.StatusOK},
-		{name: "file creation failure", status: http.StatusOK, missingDir: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			body := &trackedResponseBody{Reader: strings.NewReader("download content")}
-			client := NewClient()
-			client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
-				return &http.Response{StatusCode: tc.status, Header: make(http.Header), Body: body, Request: r}, nil
-			})
-			dir := t.TempDir()
-			if tc.missingDir {
-				dir = filepath.Join(dir, "missing")
-			}
-			resp, err := NewRequest(client).SetURL("http://example.test/file").Send().EndFile(dir, "file.txt")
-			wantError := tc.status != http.StatusOK || tc.missingDir
-			if (err != nil) != wantError || resp == nil || resp.StatusCode != tc.status {
-				t.Fatalf("response = %v, error = %v, wantError = %v", resp, err, wantError)
-			}
-			if !body.closed {
-				t.Error("response body was not closed")
-			}
-			content, fileErr := os.ReadFile(filepath.Join(dir, "file.txt"))
-			if wantError {
-				if !os.IsNotExist(fileErr) {
-					t.Fatalf("unexpected download file: %v", fileErr)
-				}
-			} else if fileErr != nil || string(content) != "download content" {
-				t.Fatalf("content = %q, error = %v", content, fileErr)
-			}
-		})
+func TestRepeatedSendClosesUnreadResponse(t *testing.T) {
+	responseBody := &trackedReadCloser{Reader: strings.NewReader("content")}
+	client := NewClient()
+	calls := 0
+	client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
+		calls++
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: responseBody}, nil
+	})
+	req := NewRequest(client).SetURL("http://example.test/").Send()
+	first := req.GetResponse()
+	if req.Send() != req {
+		t.Fatal("Send did not return the request")
 	}
+	firstError := req.GetError()
+	assertError(t, firstError, ErrInvalidRequest, nil)
+	if calls != 1 || req.GetResponse() != first || responseBody.closes != 1 || responseBody.reads != 0 {
+		t.Fatalf("duplicate send: calls=%d, closes=%d, reads=%d", calls, responseBody.closes, responseBody.reads)
+	}
+	_, _, err := req.End()
+	if err != firstError || responseBody.closes != 1 || responseBody.reads != 0 {
+		t.Fatal("reading after a rejected Send lost its error or touched the closed body")
+	}
+	req.Send()
+	if calls != 1 || responseBody.closes != 1 {
+		t.Fatal("further Send calls sent a request or closed the response again")
+	}
+}
+
+func TestFailedSendCannotBeRetriedOnSameRequest(t *testing.T) {
+	for _, invalidURL := range []bool{false, true} {
+		client := NewClient()
+		calls := 0
+		client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
+			calls++
+			return nil, context.Canceled
+		})
+		req := NewRequest(client).SetURL("http://example.test/")
+		if invalidURL {
+			req.SetURL("://bad")
+		}
+		req.Send()
+		if req.GetError() == nil {
+			t.Fatal("initial Send should fail")
+		}
+		firstCalls := calls
+		req.SetURL("http://example.test/").Send()
+		assertError(t, req.GetError(), ErrInvalidRequest, nil)
+		if calls != firstCalls {
+			t.Fatal("failed request was sent again")
+		}
+	}
+}
+
+func TestSendErrorPreservesCancellation(t *testing.T) {
+	client := NewClient()
+	client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
+		return nil, context.Canceled
+	})
+	_, _, err := NewRequest(client).SetURL("http://example.test/").Send().End()
+	assertError(t, err, ErrSendRequest, context.Canceled)
 }

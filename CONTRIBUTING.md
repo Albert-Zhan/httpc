@@ -16,6 +16,24 @@ go tool cover -func=coverage.out
 
 修复缺陷时添加能复现问题的回归测试；新增公共 API 时覆盖正常行为和关键错误路径。测试优先使用 `httptest`、本地临时文件或自定义 Transport，避免依赖公网服务、真实凭据和固定等待时间。
 
+## 测试组织
+
+测试与被测包放在同一目录，按职责维护，新增回归用例优先加入对应文件：
+
+| 文件 | 范围 |
+| --- | --- |
+| `client_test.go` | 代理、TLS、HTTP/2 和连接管理 |
+| `request_test.go` | URL、查询参数和发送状态 |
+| `request_header_test.go` | 请求头、默认 User-Agent 和 Cookie |
+| `request_body_test.go` | 正文发送、上传校验和重定向重放 |
+| `response_test.go` | 响应读取、解压、下载和读取状态 |
+| `debug_test.go` | 调试输出、脱敏和日志并发写入 |
+| `test_helpers_test.go` | 多个测试文件共用的 Transport、读写计数器和错误断言 |
+| `api_compat_test.go`、`example_test.go` | 使用 `httpc_test` 包验证公共接口兼容性和可执行示例 |
+| `body/*_test.go` | 各类正文的编码和构建错误 |
+
+使用 `Test<行为>` 命名测试，用具名 `t.Run` 区分同一行为的输入；不按修复日期、问题编号创建零散文件。辅助函数调用 `t.Helper()`，仅供单个模块使用的辅助类型留在该模块的测试文件中。通过 `t.Cleanup`、`t.TempDir` 或 `defer` 释放连接、临时文件和本地服务。
+
 发布版本校验脚本的测试需要 Python 3：
 
 ```sh

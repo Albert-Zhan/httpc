@@ -6,6 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Albert-Zhan/httpc/body"
@@ -39,7 +42,7 @@ func TestRawBinaryBodyReplaysOnRedirect(t *testing.T) {
 			defer server.Close()
 			var logs bytes.Buffer
 			client := NewClient().SetDebugOutput(&logs)
-			defer client.CloseIdleConnections()
+			t.Cleanup(client.CloseIdleConnections)
 			raw := body.NewRawData()
 			raw.SetData(payload, body.Protobuf)
 			resp, got, err := NewRequest(client).SetURL(server.URL + "/start").SetMethod("post").SetBody(raw).SetDebug(true).Send().EndByte()
@@ -79,5 +82,83 @@ func TestUnsupportedRawBodyStopsSending(t *testing.T) {
 	_, _, err = NewRequest(client).SetURL("http://example.test/").SetBody(raw).Send().End()
 	if err != nil || calls != 1 {
 		t.Fatalf("corrected raw body did not send: calls=%d error=%v", calls, err)
+	}
+}
+
+func TestUploadErrorsStopRequests(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.txt")
+	for _, tc := range []struct {
+		name string
+		form *body.Form
+		kind error
+	}{
+		{"missing file", body.NewFormData().SetFile("file", missing), ErrUploadFile},
+		{"directory", body.NewFormData().SetFile("file", t.TempDir()), ErrUploadFile},
+		{"invalid boundary", body.NewFormData().SetBoundary("invalid\nboundary"), ErrRequestBody},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if !errors.Is(tc.form.Err(), tc.kind) {
+				t.Fatalf("Form.Err = %v, want %v", tc.form.Err(), tc.kind)
+			}
+			called := false
+			client := NewClient()
+			client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
+				called = true
+				return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
+			})
+			req := NewRequest(client).SetMethod("post").SetURL("http://example.test/upload").SetBody(tc.form).Send()
+			_, _, err := req.End()
+			assertError(t, err, tc.kind, nil)
+			if !errors.Is(err, ErrRequestBody) || called || req.GetError() != err {
+				t.Fatalf("upload error = %v, transport called = %v", err, called)
+			}
+			if tc.name == "missing file" {
+				assertError(t, err, ErrUploadFile, os.ErrNotExist)
+				var fileErr *os.PathError
+				if !errors.As(err, &fileErr) || fileErr.Path != missing {
+					t.Fatal("upload error lost its original PathError")
+				}
+			}
+		})
+	}
+}
+
+type customBody struct{}
+
+func (customBody) GetContentType() string { return "text/plain" }
+
+func (customBody) Encode() io.Reader { return strings.NewReader("custom content") }
+
+type lateErrorBody struct {
+	customBody
+	err error
+}
+
+func (b *lateErrorBody) Encode() io.Reader {
+	b.err = io.ErrUnexpectedEOF
+	return b.customBody.Encode()
+}
+
+func (b *lateErrorBody) Err() error { return b.err }
+
+func TestCustomBodyErrorCheckingIsOptional(t *testing.T) {
+	called := 0
+	client := NewClient()
+	client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
+		called++
+		data, err := io.ReadAll(r.Body)
+		if err != nil || string(data) != "custom content" {
+			t.Fatalf("custom request body = %q, error = %v", data, err)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: http.NoBody}, nil
+	})
+	_, _, err := NewRequest(client).SetURL("http://example.test/").SetBody(customBody{}).Send().End()
+	if err != nil || called != 1 {
+		t.Fatalf("custom body failed: %v, calls = %d", err, called)
+	}
+	_, _, err = NewRequest(client).SetURL("http://example.test/").SetBody(&lateErrorBody{}).Send().End()
+	assertError(t, err, ErrRequestBody, io.ErrUnexpectedEOF)
+	if called != 1 {
+		t.Fatal("body encoding failure did not prevent sending")
 	}
 }
