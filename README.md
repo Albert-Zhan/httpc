@@ -6,10 +6,10 @@
 
 httpc 是基于 Go 标准库的链式 HTTP 客户端，支持请求构建、表单与文件传输、Cookie 管理、Transport 扩展和发送阶段调试，无第三方依赖。
 
-需要 **Go 1.27 或更新版本**。本文对应主分支：
+需要 **Go 1.27 或更新版本**。本文对应 v1.6.0：
 
 ```sh
-go get github.com/Albert-Zhan/httpc@master
+go get github.com/Albert-Zhan/httpc@v1.6.0
 ```
 
 [API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc) · [发布版本](https://github.com/Albert-Zhan/httpc/releases) · [开发与发布规范](CONTRIBUTING.md)
@@ -307,7 +307,7 @@ Attempt: 1
 Request: GET https://example.com/profile?token=%5BREDACTED%5D
 Protocol: HTTP/1.1
 Header-Source: transport
-Header: {"Accept-Encoding":["gzip"],"Cookie":["[REDACTED]"],"Host":["example.com"],"User-Agent":["httpc/1.5.1-dev"]}
+Header: {"Accept-Encoding":["gzip"],"Cookie":["[REDACTED]"],"Host":["example.com"],"User-Agent":["httpc/1.6.0"]}
 Cookies: {"session":"[REDACTED]"}
 Body-Preview:
 Write: completed
