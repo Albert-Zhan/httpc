@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"testing"
 
-	"github.com/Albert-Zhan/httpc/body"
+	"github.com/Albert-Zhan/httpc/v2/body"
 )
 
 func rawDebugBody(data, contentType string) body.Body {

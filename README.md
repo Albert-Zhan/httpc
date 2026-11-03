@@ -1,18 +1,20 @@
-# httpc
+# httpc v2
 
 [![CI](https://github.com/Albert-Zhan/httpc/actions/workflows/ci.yml/badge.svg)](https://github.com/Albert-Zhan/httpc/actions/workflows/ci.yml)
-[![Go Reference](https://pkg.go.dev/badge/github.com/Albert-Zhan/httpc.svg)](https://pkg.go.dev/github.com/Albert-Zhan/httpc)
+[![Go Reference](https://pkg.go.dev/badge/github.com/Albert-Zhan/httpc/v2.svg)](https://pkg.go.dev/github.com/Albert-Zhan/httpc/v2)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-httpc 是基于 Go 标准库的链式 HTTP 客户端，支持请求构建、表单与文件传输、Cookie 管理、Transport 扩展和发送阶段调试，无第三方依赖。
+httpc 是轻量的链式 HTTP 客户端，支持请求构建、正文传输、Cookie、Transport 扩展、发送阶段调试和流式下载。核心模块仅依赖 Go 标准库；tls-client 通过独立的可选模块接入。
 
-需要 **Go 1.27 或更新版本**。本文对应 v1.6.0：
+需要 **Go 1.27 或更新版本**。当前是 `dev/v2` 开发分支，版本为 `2.0.0-dev`，尚未发布 v2 正式版。稳定 v1.6.0 仍在 [master](https://github.com/Albert-Zhan/httpc/tree/master)，v1 后续维护使用 `release/v1`。
+
+v2 的导入路径为 `github.com/Albert-Zhan/httpc/v2`；本地运行和双模块 workspace 的准备方法见 [开发规范](CONTRIBUTING.md)。正式发布后安装命令为：
 
 ```sh
-go get github.com/Albert-Zhan/httpc@v1.6.0
+go get github.com/Albert-Zhan/httpc/v2@v2.0.0
 ```
 
-[API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc) · [发布版本](https://github.com/Albert-Zhan/httpc/releases) · [开发与发布规范](CONTRIBUTING.md)
+[API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc/v2) · [发布版本](https://github.com/Albert-Zhan/httpc/releases) · [开发与发布规范](CONTRIBUTING.md)
 
 ## 快速开始
 
@@ -26,7 +28,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 
-	"github.com/Albert-Zhan/httpc"
+	"github.com/Albert-Zhan/httpc/v2"
 )
 
 func main() {
@@ -50,7 +52,7 @@ func main() {
 
 配置完成后的 `Client` 可以并发复用。每次请求创建独立的 `Request` 和可变请求体；每个 Request 只发送一次、读取一次响应，重试时创建新对象。
 
-以下代码片段默认在 `main` 函数内独立使用，已创建 `client := httpc.NewClient()`；按需导入标准库及 `github.com/Albert-Zhan/httpc/body`，替换地址和文件路径。Transport 包装器的类型与方法定义放在 `main` 外。
+以下代码片段默认在 `main` 函数内独立使用，已创建 `client := httpc.NewClient()`；按需导入标准库及 `github.com/Albert-Zhan/httpc/v2/body`，替换地址和文件路径。Transport 包装器的类型与方法定义放在 `main` 外。
 
 ## 构建请求
 
@@ -163,7 +165,7 @@ fmt.Printf("status=%d sha256=%x\n", resp.StatusCode, hash.Sum(nil))
 
 失败时，`End`、`EndByte` 不返回部分正文；Writer 或文件可能保留已写入内容，调用方根据错误决定是否使用或清理。Writer 写入失败返回 `ErrWriteResponse`，原始错误链保留。
 
-### 下载文件
+### 简单文件输出
 
 ```go
 resp, err := httpc.NewRequest(client).
@@ -180,6 +182,90 @@ fmt.Println(resp.StatusCode)
 所有 End 方法支持单一的 `Content-Encoding: gzip`，包括显式请求 gzip 的情况；返回的响应头保留 Transport 提供的值。仅有 `application/gzip` MIME 类型或 `.gz` 文件名不会触发解包，其他编码或编码组合按原始正文读取。gzip 头配空正文按空正文处理并保留状态码；非空数据截断、损坏或校验失败仍返回 `ErrDecodeResponse`。
 
 未发送就读取、重复发送、成功读取后再次读取均返回 `ErrInvalidRequest`。重复发送会关闭未读取的响应体；已有发送或读取错误时，后续读取保留原错误，不再访问正文。
+
+## 下载器
+
+`downloader` 是核心模块的独立子包，可以使用 `*httpc.Client`、`*http.Client` 或其他标准请求发送器，不改变已有的 End 方法：
+
+```go
+client := httpc.NewClient().SetTimeout(0)
+defer client.CloseIdleConnections()
+d, err := downloader.New(client, downloader.Options{
+    Workers: 4,
+    ChunkSize: 8 << 20,
+    MaxBytes: 2 << 30,
+    Headers: http.Header{"Authorization": {"Bearer example"}},
+})
+if err != nil { return }
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+defer cancel()
+result, err := d.Download(ctx, "https://example.com/archive.zip", "./archive.zip")
+if err != nil { fmt.Println(err); return }
+fmt.Println(result.Path, result.Size, result.Mode, result.WorkersUsed)
+```
+
+此段需导入 `github.com/Albert-Zhan/httpc/v2/downloader`。目标目录须存在，已有文件不会被覆盖。下载器不关闭共享客户端。
+
+| 选项 | 默认值与含义 |
+| --- | --- |
+| `Workers` | 0 使用 4 个；1 强制单线程，跳过 Range 探测；上限 128 |
+| `ChunkSize` | 0 使用 8 MiB；这是分段长度，每个活动 worker 的复制缓冲区约 32 KiB |
+| `MaxBytes` | 0 不限制；按最终文件字节数计数，未知长度也会检查 |
+| `Retries` | 默认不重试；每个分段可额外重试 0–10 次，仅重试传输失败或正文截断 |
+| `Headers` | 复制后用于请求；Range、If-Range、Accept-Encoding 由下载器管理，传入这些头会报错 |
+| `Debug` | 配合 httpc.Client 输出请求日志，默认关闭 |
+| `OnProgress` | 每次下载串行回调 `Progress{Downloaded, Total, ActiveWorkers}`，约每 100ms 及开始、结束时调用 |
+
+进度的 Total 为 -1 表示未知。重试不会重复计数；降级重新下载时进度会归零。回调须及时返回，多次并发 Download 共用回调时，由调用方同步其共享状态。
+
+下载策略：
+
+- 默认用 `Range: bytes=0-0` 和 `Accept-Encoding: identity` 探测；返回 200 时直接复用该响应流式保存。
+- 返回有效 206、已知长度、强 ETag，且文件大于一个分段时，并行请求分段并携带 If-Range。只有 Accept-Ranges 或弱 ETag 时使用单线程。
+- 每个分段检查 Content-Range、总长度和实际字节数。下载期间返回 200、416、编码变化或 ETag 变化时，取消并等待全部 worker，再重新发起一次单线程下载。
+- 401、403、404 等状态或畸形分段直接失败。不会把完整 200 正文写入某个分段的偏移位置。
+- 单线程支持未知长度和单一 gzip Content-Encoding；普通 `.gz` 文件或 application/gzip 类型不会触发解包。所有路径均流式复制。
+
+数据先写入同目录的随机临时文件，完成长度检查并同步、关闭后，用硬链接提交到目标路径，避免覆盖并发创建的文件。文件权限为 0600，文件系统须支持硬链接；失败或取消时删除临时文件。当前不提供跨进程断点续传、覆盖已有文件或持久化队列。
+
+下载失败可用 `errors.Is` 判断 `downloader.ErrInvalidOptions`、`ErrInvalidResponse`、`ErrHTTPStatus`、`ErrTooLarge`、`ErrDestinationExists`，以及底层文件错误和 context 错误。
+
+## 可选 tls-client 后端
+
+标准库后端仍由 `httpc.NewClient()` 创建。通用扩展入口是：
+
+```go
+// backend 实现 Do(*http.Request) (*http.Response, error)。
+client, err := httpc.NewClientWithDoer(backend)
+```
+
+Client 自身也实现 Doer，可直接 `client.Do(req)`；成功后调用方关闭 `resp.Body`。`httpc.WithDebug(ctx)` 可为这种调用开启发送日志。`NewRequest(client).Send(ctx)` 保留原有链式调用方式。
+
+bogdanfinn/tls-client 的适配器位于独立模块 `github.com/Albert-Zhan/httpc/adapters/tlsclient/v2`，固定依赖 tls-client v1.18.0，不会进入只使用核心库的项目：
+
+```go
+raw, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(),
+    tls_client.WithClientProfile(profiles.DefaultClientProfile),
+    tls_client.WithDisableHttp3(),
+    tls_client.WithTimeoutSeconds(0),
+)
+if err != nil { return }
+defer raw.Close()
+client, err := tlsclient.New(raw)
+if err != nil { return }
+resp, text, err := httpc.NewRequest(client).
+    SetURL("https://example.com").SetDebug(true).Send(ctx).End()
+```
+
+此段需导入适配模块、`github.com/bogdanfinn/tls-client`（别名 tls_client）及其 profiles 包。配置和完整可运行下载示例见 [适配器说明](adapters/tlsclient/README.md)。
+
+外部后端自行管理代理、TLS、Jar、重定向和总超时。httpc 的 `SetProxy`、`ClearProxy`、`SetSkipVerify`、`SetTimeout`、`SetCookieJar`、`SetRedirect`、`CustomizeTransport`、`WrapTransport` 仅用于默认后端；在外部后端上调用会记录 `ErrUnsupportedBackend` 并阻止发送，需在 raw 上配置后重新创建包装客户端。日志配置和每个 Request 的头、正文、取消、响应限额继续可用。
+
+`CloseIdleConnections()` 会转发给外部后端的同名方法；不会调用其 `Close()`。适配器保留流式正文及响应 Trailer，并桥接上游 fhttp Trace 到标准 httptrace，同时保留原有两种 Trace 回调。TLS 状态只映射公共字段，不能通过转换后的状态导出密钥材料。
+
+日志可以采集上游实际发出的写入事件，保留调用方 `Send(ctx)` 中的 Trace。上游专用拨号器可能不提供部分 DNS、TLS 事件，未发出的事件不会被补造；丢弃 context 或不发 Trace 的自定义后端会退回请求快照。外部后端的一次 Do 中若包含内部重定向，日志按 Trace 尝试记录，Hop 不代表其内部每一跳，快照 URL 仍为传入的 URL。
+
+不要为大文件下载启用上游 `tls_client.WithDebug()`，该选项会读取完整正文。使用 httpc 的有界日志预览和 `downloader.Options.Debug`。
 
 ## Cookie 管理
 
@@ -307,7 +393,7 @@ Attempt: 1
 Request: GET https://example.com/profile?token=%5BREDACTED%5D
 Protocol: HTTP/1.1
 Header-Source: transport
-Header: {"Accept-Encoding":["gzip"],"Cookie":["[REDACTED]"],"Host":["example.com"],"User-Agent":["httpc/1.6.0"]}
+Header: {"Accept-Encoding":["gzip"],"Cookie":["[REDACTED]"],"Host":["example.com"],"User-Agent":["httpc/2.0.0-dev"]}
 Cookies: {"session":"[REDACTED]"}
 Body-Preview:
 Write: completed

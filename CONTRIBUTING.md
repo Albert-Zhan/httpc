@@ -1,16 +1,34 @@
 # 开发与发布
 
+## 分支与模块
+
+| 分支 | 职责 | 发布规则 |
+| --- | --- | --- |
+| `master` | 当前稳定版本；v2 正式发布时合入开发线 | 核心稳定版及适配器版本 |
+| `release/v1` | v1 的兼容修复 | 仅核心稳定 v1.x |
+| `dev/v2` | v2 开发、下载器和后端适配 | 仅 v2 alpha、beta、rc 预发布 |
+
+`master` 当前保留稳定 v1.6.0。v2 功能先在 `dev/v2` 开发，不直接改动 v1 模块路径。无需新仓库或根目录下再建 v2 文件夹。
+
+| 模块 | go.mod 路径 | 模块路径 | 标签示例 |
+| --- | --- | --- | --- |
+| 核心及 downloader | `go.mod` | `github.com/Albert-Zhan/httpc/v2` | `v2.0.0` |
+| 可选 tls-client 适配器 | `adapters/tlsclient/go.mod` | `github.com/Albert-Zhan/httpc/adapters/tlsclient/v2` | `adapters/tlsclient/v2.0.0` |
+
 ## 本地检查
 
-使用 `go.mod` 要求的 Go 版本（当前为 Go 1.27）。提交前在项目根目录执行：
+使用 Go 1.27 或更新版本。v2 开发时从根目录生成本地 workspace，把适配器的核心依赖指向同一份检出代码；go.work、go.work.sum 不提交，模块文件不保留本地 replace：
 
 ```sh
+python3 -B .github/scripts/setup_workspace.py
 gofmt -w .
 go build ./...
 go vet ./...
 go test -race -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out ./...
-go tool cover -func=coverage.out
+(cd adapters/tlsclient && go build ./... && go vet ./... && go test -race -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out ./...)
 ```
+
+只验证核心模块时可设置 `GOWORK=off`，不需要下载 TLS 依赖。根目录 `go test ./...` 不会自动测试嵌套模块，适配器必须单独执行。可运行的下载示例位于 `downloader/example_test.go` 和 `adapters/tlsclient/examples/download/main.go`。
 
 竞态检查需要启用 CGO 并安装 C 编译器。GitHub 托管 runner 已提供相应环境。文本文件通过 `.gitattributes` 统一使用 LF 换行；CI 在检出历史提交时也关闭自动 CRLF 转换。
 
@@ -22,7 +40,7 @@ go tool cover -func=coverage.out
 
 | 文件 | 范围 |
 | --- | --- |
-| `client_test.go` | 代理、TLS 和 HTTP/2 默认配置 |
+| `client_test.go`、`doer_test.go` | 默认后端配置、外部后端、公共发送与配置错误 |
 | `transport_test.go` | 包装顺序、配置校验、独立 Transport 和空闲连接管理 |
 | `request_test.go` | URL、查询参数和发送状态 |
 | `request_header_test.go` | 请求头、默认 User-Agent 和 Cookie |
@@ -35,6 +53,8 @@ go tool cover -func=coverage.out
 | `test_helpers_test.go` | 多个测试文件共用的 Transport、读写替身、响应构造及错误断言 |
 | `api_compat_test.go`、`example_test.go` | 使用 `httpc_test` 包验证公共接口兼容性和可执行示例 |
 | `body/*_test.go` | 各类正文的编码和构建错误 |
+| `downloader/*_test.go` | 流式下载、分段协议、降级、取消、限额、进度和文件提交 |
+| `adapters/tlsclient/*_test.go` | HTTP/1.1、HTTP/2、转换、重定向、Cookie、Trace 和下载器集成 |
 
 使用 `Test<行为>` 命名测试，用具名 `t.Run` 区分同一行为的输入；不按修复日期、问题编号创建零散文件。辅助函数调用 `t.Helper()`，仅供单个模块使用的辅助类型留在该模块的测试文件中。通过 `t.Cleanup`、`t.TempDir` 或 `defer` 释放连接、临时文件和本地服务。
 
@@ -48,10 +68,10 @@ python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 
 ## 自动检查
 
-向 `master` 推送、提交以 `master` 为目标的 PR，或手动运行 CI，都会调用同一套检查：
+向 `master`、`release/v1`、`dev/v2` 推送，提交以这些分支为目标的 PR，或手动运行 CI，都会调用同一套检查：
 
 - 在 Linux、Windows、macOS 上安装 `go.mod` 指定 Go 系列的最新补丁版本。
-- 检查已跟踪 Go 文件的 `gofmt` 格式，执行构建、`go vet`、竞态测试与覆盖率统计。
+- 检查已跟踪 Go 文件的 `gofmt` 格式，执行构建、`go vet`、竞态测试与覆盖率统计。检出包含适配器时，同时检查两个模块，并让它们使用同一提交的核心代码。
 - 在 Actions 运行摘要中展示总覆盖率，并保留各平台的 `coverage.out` 报告 7 天。
 - Linux 任务同时验证发布版本校验脚本。
 
@@ -59,14 +79,35 @@ python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 
 ## 发布流程
 
-发布通过 `.github/workflows/release.yml` 完成：
+发布通过 `.github/workflows/release.yml` 完成，不在普通功能提交时创建版本。`dev/v2` 当前的 `.github/release.json` 设置 `enabled: false`，继承的 v1 配置不会意外发布为 v2。
 
-1. 将 `version.go` 中的 `Version` 更新为目标正式版本（不含 `v` 前缀或 `-dev` 后缀），同步 README 安装命令与日志示例。将待发布代码提交到 `master`，确认 CI 通过，记录待发布提交的完整 SHA。
-2. 修改 `.github/release.json`：填写新的 `tag_name`、相同版本的 `name`、更新说明 `body`，并将 `target_commitish` 设置为待发布提交的完整 SHA。版本格式为 `vX.Y.Z`。
-3. 将发布配置提交到 `master`，自动触发发布流程；也可以在 Actions 中手动运行 Publish release。
-4. 流程校验配置与提交历史，然后针对 `target_commitish` 指定的提交，在三个平台执行完整检查。创建新 Release 前读取该提交的 `version.go`，确认 `tag_name` 等于 `"v" + Version`，开发版本或不一致的版本会阻止发布。通过后创建正式 Release，并设为 Latest。
-5. 确认 Actions 成功、Release 更新说明正确，且版本标签指向预期提交。
+1. 将对应模块的 `version.go` 的 Version 更新为目标版本，不带 v 前缀。正式版本使用 `2.0.0`，预发布使用 `2.0.0-beta.1` 或 `2.0.0-rc.1`，`-dev` 不能发布。同步文档与依赖并提交，记录完整 SHA。
+2. 在允许发布的分支修改 `.github/release.json`，填写 `enabled: true`、`module_dir`、`tag_name`、`target_commitish`、`name`、`body`。`module_dir` 只允许 `.` 或 `adapters/tlsclient`；标签格式见模块表。
+3. 推送该配置触发发布，或在对应分支手动运行 Publish release。目标必须是配置提交的祖先，不能发布任意其他分支的提交。
+4. 校验目标提交中 Version、模块路径、标签主版本一致；在三平台运行完整检查。适配器发布额外用 `GOWORK=off` 验证已发布的核心依赖，确保不是仅本地 workspace 才能构建。
+5. 全部通过后创建 Release。已有标签不能移动；重复运行仅核对已有 Release，不覆盖其内容。
 
-发布检查与普通 CI 复用 `.github/workflows/check.yml`。测试的是标签将指向的提交；配置提交本身不必包含在标签中。任一检查失败都会阻止创建 Release。检查任务只有读取权限，只有最后的发布任务拥有仓库内容写入权限。
+核心预发布配置示例（SHA 替换为真正的待发布提交）：
 
-已有标签指向其他提交时，流程会拒绝移动标签。重复运行已成功发布的配置会确认现有版本，不会覆盖 Release；修改已发布代码应使用新版本号。
+```json
+{
+  "enabled": true,
+  "module_dir": ".",
+  "tag_name": "v2.0.0-beta.1",
+  "target_commitish": "完整的40位提交SHA",
+  "name": "v2.0.0-beta.1",
+  "body": "本次预发布说明"
+}
+```
+
+适配器必须先更新 go.mod，使其依赖的核心版本已经发布；预发布适配器可依赖核心预发布，稳定适配器必须依赖核心稳定版。不要在 go.mod 中提交本地 replace。依赖版本变更后，可临时添加本地 replace 执行 go mod tidy，再移除并核对差异；正式发布前必须通过无 workspace 的检查。
+
+预发布自动标记为 Prerelease。适配器版本和预发布不会设为 Latest；核心稳定版只有在不低于已发布核心稳定版时设为 Latest，避免 v2 发布后的 v1 补丁抢占 Latest。
+
+v2 正式发布时先把 `dev/v2` 合入 `master`，将核心 Version 改为 2.0.0，通过 CI 后发布 `v2.0.0`；随后发布适配模块的 `adapters/tlsclient/v2.0.0`。v1 后续修复只在 `release/v1` 发布新补丁标签，旧标签不变。GitHub 默认分支继续使用 master。
+
+检查任务仅有读取权限；最后的发布任务才拥有仓库内容写入权限。发布脚本、版本和分支策略的测试命令：
+
+```sh
+python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
+```

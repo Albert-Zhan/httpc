@@ -3,10 +3,12 @@ package httpc
 import (
 	"errors"
 
-	"github.com/Albert-Zhan/httpc/body"
+	"github.com/Albert-Zhan/httpc/v2/body"
 )
 
 var (
+	// ErrUnsupportedBackend 表示当前外部后端不支持此客户端配置方法。
+	ErrUnsupportedBackend = errors.New("httpc: unsupported backend configuration")
 	// ErrInvalidRequest 表示请求 URL、参数、方法、Transport 包装配置或调用状态无效。
 	ErrInvalidRequest = errors.New("httpc: invalid request")
 	// ErrInvalidProxy 表示代理地址配置无效。
@@ -27,7 +29,7 @@ var (
 	ErrDecodeResponse = errors.New("httpc: decode response failed")
 	// ErrSaveFile 表示下载文件创建、写入或关闭失败。
 	ErrSaveFile = errors.New("httpc: save file failed")
-	// ErrHTTPStatus 表示下载接口返回了非 200 状态码。
+	// ErrHTTPStatus 表示文件输出或下载阶段返回了不符合预期的状态码。
 	// End、EndByte 和 EndTo 不会因 HTTP 状态码而返回此错误。
 	ErrHTTPStatus = errors.New("httpc: unexpected HTTP status")
 )

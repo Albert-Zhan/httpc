@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Albert-Zhan/httpc/body"
+	"github.com/Albert-Zhan/httpc/v2/body"
 )
 
 type closeableRequestBody struct{ reader *trackedReadCloser }

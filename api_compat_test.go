@@ -8,8 +8,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/Albert-Zhan/httpc"
-	"github.com/Albert-Zhan/httpc/body"
+	"github.com/Albert-Zhan/httpc/v2"
+	"github.com/Albert-Zhan/httpc/v2/body"
 )
 
 // 编译期检查新旧 API 的函数和方法签名兼容。

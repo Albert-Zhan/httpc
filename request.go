@@ -10,7 +10,7 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Albert-Zhan/httpc/body"
+	"github.com/Albert-Zhan/httpc/v2/body"
 )
 
 // Request 构建、发送并读取一次 HTTP 请求，不支持并发共享。
@@ -156,7 +156,7 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 		return r
 	}
 	r.sendCalled = true
-	if r.httpc == nil || r.httpc.client == nil {
+	if r.httpc == nil || (r.httpc.client == nil && r.httpc.doer == nil) {
 		r.err = wrapError(ErrInvalidRequest, "send request", fmt.Errorf("client is nil"))
 		return r
 	}
@@ -243,18 +243,7 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 		r.request.AddCookie(v)
 	}
 
-	client := r.httpc.client
-	if r.debug && r.httpc.debugEnabled() {
-		// 请求私有的客户端副本共享连接池、Jar 和策略，避免修改并发使用的客户端。
-		traced := *client
-		traced.Transport = &debugTransport{next: client.Transport, client: r.httpc, id: debugRequestID.Add(1)}
-		client = &traced
-	}
-	r.response, r.err = client.Do(r.request)
-	if r.err != nil {
-		r.err = wrapError(ErrSendRequest, "send request", r.err)
-		return r
-	}
+	r.response, r.err = r.httpc.do(r.request, r.debug)
 	return r
 }
 

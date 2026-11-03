@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 
-	"github.com/Albert-Zhan/httpc"
+	"github.com/Albert-Zhan/httpc/v2"
 )
 
 func ExampleError() {

@@ -14,7 +14,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/Albert-Zhan/httpc/body"
+	"github.com/Albert-Zhan/httpc/v2/body"
 )
 
 func TestUserAgentInDebugLog(t *testing.T) {
