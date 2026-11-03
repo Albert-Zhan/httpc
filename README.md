@@ -118,7 +118,9 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-`Raw.SetData` 接受正文字符串及 MIME 类型，可使用 `body.JSON`、`body.Text`、`body.HTML`、`body.XML`、`body.JavaScript` 或自定义类型。JSON 字符串由调用方准备，库不会自动序列化业务对象。
+`Raw.SetData` 接受 `string`、`[]byte` 或 nil，以及正文的 MIME 类型；nil 表示空正文，`SetData("", "")` 也合法。字节切片会被复制，后续修改原切片不会改变请求内容。可使用 `body.JSON`、`body.Text`、`body.HTML`、`body.XML`、`body.JavaScript`、`body.Protobuf` 或自定义类型。
+
+protobuf 等二进制数据应先由调用方编码，再通过 `SetData(payload, body.Protobuf)` 设置；`body.Protobuf` 的值为 `application/x-protobuf`。JSON 也需先编码，Raw 不会自动序列化对象。不支持的输入类型通过 `data.Err()` 报告 `ErrRequestBody`，`Send()` 会停止发送；后续调用 `SetData` 会替换正文和错误状态。
 
 `SetBody` 根据请求体设置 `Content-Type`；手动设置的 `Content-Type` 优先。
 
