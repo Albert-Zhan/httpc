@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"strings"
 	"testing"
@@ -223,5 +224,114 @@ func TestUserAgentWithNilBuilderHeaders(t *testing.T) {
 	req := new(Request).SetClient(client).SetURL("http://example.test/")
 	if _, _, err := req.Send().End(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRequestHostOnTheWire(t *testing.T) {
+	for _, h2 := range []bool{false, true} {
+		t.Run(fmt.Sprintf("http2=%v", h2), func(t *testing.T) {
+			type observation struct {
+				host, uri, cookie, sni string
+				proto                  int
+			}
+			seen := make(chan observation, 1)
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen <- observation{r.Host, r.RequestURI, r.Header.Get("Cookie"), r.TLS.ServerName, r.ProtoMajor}
+			}))
+			server.EnableHTTP2 = h2
+			server.StartTLS()
+			defer server.Close()
+			origin, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			client := NewClient()
+			defer client.CloseIdleConnections()
+			pool := x509.NewCertPool()
+			pool.AddCert(server.Certificate())
+			client.CustomizeTransport(func(tr *http.Transport) { tr.TLSClientConfig.RootCAs = pool })
+			jar := NewCookieJar()
+			jar.SetCookies(origin, []*http.Cookie{{Name: "origin_cookie", Value: "kept"}})
+			for _, host := range []string{"virtual.example", "new.example"} {
+				target := *origin
+				target.Host = host
+				jar.SetCookies(&target, []*http.Cookie{{Name: "host_cookie", Value: "kept"}})
+			}
+			client.SetCookieJar(jar)
+			for _, tc := range []struct {
+				name      string
+				configure func(*Request) *Request
+				host      string
+			}{
+				{"default", func(r *Request) *Request { return r }, origin.Host},
+				{"custom", func(r *Request) *Request { return r.SetHost("virtual.example") }, "virtual.example"},
+				{"custom port", func(r *Request) *Request { return r.SetHost("virtual.example:8443") }, "virtual.example:8443"},
+				{"reset", func(r *Request) *Request { return r.SetHost("ignored.example").SetHost("") }, origin.Host},
+				{"last value", func(r *Request) *Request { return r.SetHost("old.example").SetHost("new.example") }, "new.example"},
+				{"URL after Host", func(r *Request) *Request { return r.SetHost("virtual.example").SetURL(server.URL + "/path?q=one") }, "virtual.example"},
+				{"header alone", func(r *Request) *Request { return r.SetHeader("Host", "ignored.example") }, origin.Host},
+				{"header and override", func(r *Request) *Request { return r.SetHost("virtual.example").SetHeader("host", "ignored.example") }, "virtual.example"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					req := NewRequest(client).SetURL(server.URL + "/path?q=one")
+					if tc.configure(req) != req {
+						t.Fatal("setter changed request instance")
+					}
+					resp, _, err := req.Send().End()
+					if err != nil {
+						t.Fatal(err)
+					}
+					got := <-seen
+					wantProto := 1
+					if h2 {
+						wantProto = 2
+					}
+					wantCookie := "host_cookie=kept"
+					if tc.host == origin.Host {
+						wantCookie = "origin_cookie=kept"
+					}
+					if got.host != tc.host || got.uri != "/path?q=one" || got.proto != wantProto || got.cookie != wantCookie || got.sni != "" || resp == nil || req.request.URL.Host != origin.Host {
+						t.Fatalf("observed=%+v URL=%s want Host=%s proto=%d", got, req.request.URL, tc.host, wantProto)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestRequestHostValidation(t *testing.T) {
+	for _, host := range []string{"https://example.com", "example.com/path", "user@example.com", "example.com?q=1", "example.com#part", "bad host", "example.com\r\nX-Test: bad", "example.com\\path", "example.com:bad", "example.com:", ":8080", "::1"} {
+		t.Run(host, func(t *testing.T) {
+			sent := false
+			client := NewClient()
+			client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
+				sent = true
+				return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+			})
+			req := NewRequest(client).SetURL("http://example.test").SetHost(host).Send()
+			assertError(t, req.GetError(), ErrInvalidRequest, nil)
+			if sent {
+				t.Fatal("invalid Host was sent")
+			}
+		})
+	}
+	for _, host := range []string{"[::1]:8080", "例子.测试", ""} {
+		t.Run("valid/"+host, func(t *testing.T) {
+			client := NewClient()
+			client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
+				want := host
+				if want == "" {
+					want = "example.test"
+				}
+				if r.Host != want {
+					t.Fatalf("Host=%q want=%q", r.Host, want)
+				}
+				return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+			})
+			_, _, err := NewRequest(client).SetHost("https://bad.example").SetHost(host).SetURL("http://example.test").Send().End()
+			if err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
