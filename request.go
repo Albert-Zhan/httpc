@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/Albert-Zhan/httpc/body"
 )
@@ -20,6 +21,7 @@ type Request struct {
 	response      *http.Response
 	method        string
 	url           string
+	host          string
 	param         url.Values
 	header        http.Header
 	cookies       []*http.Cookie
@@ -69,6 +71,16 @@ func (r *Request) SetURL(rawURL string) *Request {
 // Deprecated: 请使用 SetURL。此方法在 v1.x 中保留，可能在未来主版本中移除。
 func (r *Request) SetUrl(rawURL string) *Request {
 	return r.SetURL(rawURL)
+}
+
+// SetHost 覆盖 HTTP/1.1 Host 或 HTTP/2 :authority，空字符串恢复使用 URL 主机。
+// host 为主机名或主机名:端口，不含协议、路径、查询或用户信息。
+// 不改变 URL、连接地址或 TLS SNI；CookieJar 的匹配规则由发送后端决定。
+// 应在 Send 前调用。
+// 格式无效时，Send 返回 ErrInvalidRequest。
+func (r *Request) SetHost(host string) *Request {
+	r.host = host
+	return r
 }
 
 // SetParam 追加查询参数，同名参数保留多个值。
@@ -164,6 +176,12 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 		r.err = r.httpc.transportErr
 		return r
 	}
+	if r.host != "" {
+		if err := validateRequestHost(r.host); err != nil {
+			r.err = wrapError(ErrInvalidRequest, "validate request host", err)
+			return r
+		}
+	}
 	requestURL := r.url
 	if len(r.param) > 0 {
 		u, err := url.Parse(requestURL)
@@ -218,6 +236,10 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 		return r
 	}
 
+	if r.host != "" {
+		r.request.Host = r.host
+	}
+
 	r.request.Header = r.header.Clone()
 	if r.request.Header == nil {
 		r.request.Header = make(http.Header)
@@ -256,6 +278,21 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 		return r
 	}
 	return r
+}
+
+// Host 是 authority，不接受完整 URL 或可分隔请求头的字符。
+func validateRequestHost(host string) error {
+	if strings.HasSuffix(host, ":") || strings.ContainsAny(host, "/\\?#@") || strings.IndexFunc(host, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
+		return fmt.Errorf("host must be a hostname or hostname:port")
+	}
+	authority, err := url.Parse("//" + host)
+	if err != nil {
+		return err
+	}
+	if authority.Hostname() == "" || authority.Host != host || authority.User != nil || authority.Path != "" || authority.RawQuery != "" || authority.Fragment != "" || (strings.Count(host, ":") > 1 && !strings.HasPrefix(host, "[")) {
+		return fmt.Errorf("host must be a hostname or hostname:port")
+	}
+	return nil
 }
 
 func requestBodyError(data body.Body) error {

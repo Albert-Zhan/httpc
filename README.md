@@ -71,6 +71,7 @@ fmt.Println(resp.StatusCode, text)
 | 设置 | 行为 |
 | --- | --- |
 | `SetMethod(name)` | 默认 GET，方法名不区分大小写 |
+| `SetHost(host)` | 覆盖 HTTP Host / HTTP/2 :authority；空字符串恢复 URL 主机 |
 | `SetParam(name, value)` | 合并 URL 查询参数，同名参数追加多个值 |
 | `SetHeader(name, value)` | 替换同名头的全部值，名称不区分大小写 |
 | `AddHeader(name, value)` | 追加同名头的一个值 |
@@ -78,6 +79,10 @@ fmt.Println(resp.StatusCode, text)
 | `SetBody(data)` | 设置正文，自动采用其 Content-Type；手动设置的 Content-Type 优先 |
 
 未设置 User-Agent 时使用 `httpc/` 加 `httpc.Version`，即 `httpc.DefaultUserAgent`；HTTP/1.1 和 HTTP/2 一致。自定义值优先，`SetHeader("User-Agent", "")` 可禁止发送该头。
+
+`SetHost("api.example.com:8443")` 只改变请求声明的主机，不改变 URL 的连接目标或 TLS SNI。它接受主机名或主机名:端口；格式无效时 Send 返回 ErrInvalidRequest。`SetHeader("Host", ...)` 不能替代它。SetHost 与 SetURL 的调用顺序无关；清除覆盖可调用 `SetHost("")`。
+
+Go 1.27 标准后端的自动 Cookie 按覆盖后的 Host 匹配。
 
 ## 请求体与上传
 
@@ -140,7 +145,7 @@ fmt.Println(resp.StatusCode, text)
 | `End()` | `(*http.Response, string, error)` | 读取文本 |
 | `EndByte()` | `(*http.Response, []byte, error)` | 读取字节 |
 | `EndTo(writer)` | `(*http.Response, error)` | 流式写入 `io.Writer` |
-| `EndFile(dir, name)` | `(*http.Response, error)` | 下载文件，仅接受 200 OK |
+| `EndFile(dir, name)` | `(*http.Response, error)` | 已弃用，v1.x 保留，仅接受 200 OK |
 
 `End`、`EndByte` 和 `EndTo` 不把 4xx/5xx 视为操作错误。`err == nil` 表示发送及读取完成，业务上是否成功还需判断 `resp.StatusCode`。响应头及响应 Cookie 也从 `resp` 获取。
 
@@ -174,6 +179,8 @@ if err != nil {
 }
 fmt.Println(resp.StatusCode)
 ```
+
+`EndFile` 已标记 Deprecated，在 v1.x 中保留；v2 已移除。v1 的通用流式输出可使用 `EndTo(io.Writer)`，升级 v2 后文件下载建议使用独立的 downloader。替换方式与行为差异见 [v2 迁移说明](https://github.com/Albert-Zhan/httpc/blob/dev/v2/MIGRATING.md)。
 
 目录须已存在，目标文件存在时会被覆盖；文件名为空时从请求 URL 获取。下载收到非 200 状态码返回 `ErrHTTPStatus`；文件创建、写入、关闭，以及下载中的读取或超限错误可匹配 `ErrSaveFile`。
 

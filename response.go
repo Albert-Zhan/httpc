@@ -72,6 +72,9 @@ func (r *Request) EndTo(dst io.Writer) (*http.Response, error) {
 
 // EndFile 将已发送请求的响应保存为文件并关闭响应体，支持 gzip 解码，仅接受 200 OK。
 // savePath 目录须已存在，已有文件会被覆盖；saveFileName 为空时从 URL 获取文件名。
+//
+// Deprecated: 此方法在 v1.x 中保留，v2 已移除。v1 可使用 EndTo(io.Writer)；
+// 升级 v2 后，文件下载建议使用 downloader，已发送的响应使用 EndTo(io.Writer)。
 func (r *Request) EndFile(savePath, saveFileName string) (resp *http.Response, err error) {
 	if err := r.beginRead("save response file"); err != nil {
 		return nil, err

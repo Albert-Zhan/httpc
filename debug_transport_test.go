@@ -62,6 +62,9 @@ func TestDebugCapturesTransportHeaders(t *testing.T) {
 			}
 			u, _ := url.Parse(server.URL)
 			jar.SetCookies(u, []*http.Cookie{{Name: "automatic", Value: "jar-value"}})
+			virtual := *u
+			virtual.Host = "virtual.example"
+			jar.SetCookies(&virtual, []*http.Cookie{{Name: "automatic", Value: "jar-value"}})
 			client.SetCookieJar(jar)
 			for _, tc := range []struct {
 				name, method string
@@ -69,6 +72,7 @@ func TestDebugCapturesTransportHeaders(t *testing.T) {
 				configure    func(*Request)
 			}{
 				{"default", "GET", false, func(*Request) {}},
+				{"custom Host", "GET", false, func(r *Request) { r.SetHost("virtual.example:8443") }},
 				{"body", "POST", true, func(*Request) {}},
 				{"head", "HEAD", false, func(*Request) {}},
 				{"range", "GET", false, func(r *Request) { r.SetHeader("Range", "bytes=0-9") }},
