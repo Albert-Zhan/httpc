@@ -73,6 +73,7 @@ fmt.Println(resp.StatusCode, text)
 | 设置 | 行为 |
 | --- | --- |
 | `SetMethod(name)` | 默认 GET，方法名不区分大小写 |
+| `SetHost(host)` | 覆盖 HTTP Host / HTTP/2 :authority；空字符串恢复 URL 主机 |
 | `SetParam(name, value)` | 合并 URL 查询参数，同名参数追加多个值 |
 | `SetHeader(name, value)` | 替换同名头的全部值，名称不区分大小写 |
 | `AddHeader(name, value)` | 追加同名头的一个值 |
@@ -80,6 +81,10 @@ fmt.Println(resp.StatusCode, text)
 | `SetBody(data)` | 设置正文，自动采用其 Content-Type；手动设置的 Content-Type 优先 |
 
 未设置 User-Agent 时使用 `httpc/` 加 `httpc.Version`，即 `httpc.DefaultUserAgent`；HTTP/1.1 和 HTTP/2 一致。自定义值优先，`SetHeader("User-Agent", "")` 可禁止发送该头。
+
+`SetHost("api.example.com:8443")` 只改变请求声明的主机，不改变 URL 的连接目标或 TLS SNI。它接受主机名或主机名:端口；格式无效时 Send 返回 ErrInvalidRequest。`SetHeader("Host", ...)` 不能替代它。SetHost 与 SetURL 的调用顺序无关；清除覆盖可调用 `SetHost("")`。
+
+Go 1.27 标准后端的自动 Cookie 按覆盖后的 Host 匹配。tls-client 适配器沿用当前 fhttp v0.7.3 的原生行为，自动 Cookie 仍按 URL 主机匹配。
 
 ## 请求体与上传
 

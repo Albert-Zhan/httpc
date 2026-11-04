@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/http/httptrace"
 	"net/textproto"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -94,6 +95,52 @@ func TestRequestRedirectAndTrace(t *testing.T) {
 			}
 			if !strings.Contains(log.String(), "Header-Source: transport") || !strings.Contains(log.String(), resp.Proto) {
 				t.Fatal(log.String())
+			}
+		})
+	}
+}
+
+func TestRequestHostThroughAdapter(t *testing.T) {
+	for _, h1 := range []bool{true, false} {
+		t.Run(fmt.Sprintf("http1=%v", h1), func(t *testing.T) {
+			type observation struct {
+				host, sni, path, cookie string
+				proto                   int
+			}
+			seen := make(chan observation, 1)
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen <- observation{r.Host, r.TLS.ServerName, r.URL.Path, r.Header.Get("Cookie"), r.ProtoMajor}
+			}))
+			server.EnableHTTP2 = !h1
+			server.StartTLS()
+			defer server.Close()
+			raw, client := newTestClient(t, h1)
+			origin, err := url.Parse(server.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			raw.SetCookies(origin, []*fhttp.Cookie{{Name: "origin_cookie", Value: "kept"}})
+			virtual := *origin
+			virtual.Host = "virtual.example"
+			raw.SetCookies(&virtual, []*fhttp.Cookie{{Name: "host_cookie", Value: "not_sent"}})
+			for _, host := range []string{"virtual.example:8443", ""} {
+				req := httpc.NewRequest(client).SetHost("old.example").SetHost(host).SetURL(server.URL + "/path")
+				resp, _, err := req.Send().End()
+				if err != nil {
+					t.Fatal(err)
+				}
+				got := <-seen
+				want := host
+				if want == "" {
+					want = resp.Request.URL.Host
+				}
+				proto := 2
+				if h1 {
+					proto = 1
+				}
+				if got.host != want || got.proto != proto || got.path != "/path" || got.sni != "" || got.cookie != "origin_cookie=kept" {
+					t.Fatalf("observed=%+v want Host=%q proto=%d", got, want, proto)
+				}
 			}
 		})
 	}
