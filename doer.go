@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"reflect"
-	"strings"
 )
 
 // Doer 执行 HTTP 请求。实现须支持并发调用，遵循 http.Client.Do 的正文关闭约定，
@@ -85,14 +84,7 @@ func (c *Client) do(req *http.Request, debug bool) (*http.Response, error) {
 	if cloned.Header == nil {
 		cloned.Header = make(http.Header)
 	}
-	explicit := false
-	for key := range cloned.Header {
-		if strings.EqualFold(key, "User-Agent") {
-			explicit = true
-			break
-		}
-	}
-	if !explicit {
+	if _, explicit := headerValuesFold(cloned.Header, "User-Agent"); !explicit {
 		cloned.Header.Set("User-Agent", DefaultUserAgent)
 	}
 	var resp *http.Response

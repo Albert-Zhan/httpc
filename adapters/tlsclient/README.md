@@ -57,6 +57,21 @@ httpc 的标准后端配置方法不适用于此包装客户端，误用会返�
 
 请求 Body、GetBody、长度、Host 和多值头会保留；正文不被预读取，响应 Body 仍为流。响应 Trailer 在正文读取结束后同步。标准 httptrace 与已有 fhttp Trace 会组合；只转发上游实际发出的事件，专用拨号器可能缺少 DNS 或 TLS 握手事件。GotConn 中的连接仍是上游连接类型，不能断言为标准库的 `*tls.Conn`。
 
+需要保留头名称写法时，使用 `SetHeaderRaw`、`AddHeaderRaw`，例如：
+
+```go
+req := httpc.NewRequest(client).
+    SetURL("https://example.com").
+    SetHeaderRaw("user-agent", "my-client/1.0").
+    SetHeaderRaw("content-type", "application/json").
+    SetHeaderRaw("x-device-id", "abc").
+    AddHeaderRaw("x-device-id", "def")
+```
+
+两个方法分别等价于为 `fhttp.Header` 的精确 map 键赋值和追加值；`x-token` 与 `X-Token` 不会合并。适配器保留名称和值，由上游处理特殊头、Cookie、压缩和重定向。httpc 未发现任何大小写形式的 User-Agent 时补充默认 UA；构建器有正文且未显式设置 Content-Type 时采用正文类型，显式空值也会保留。HTTP/1.1 的普通头保留写法，HTTP/2 名称仍为小写。
+
+可以通过这些方法传入 `fhttp.HeaderOrderKey`、`fhttp.PHeaderOrderKey` 等上游控制键，多个值使用 AddHeaderRaw 追加；其含义和限制由 fhttp 定义。httpc 核心不解析这些键。标准库后端不识别这些控制键，对 User-Agent、Host、传输长度等特殊头的处理也可能不同。
+
 响应 TLS 公共字段会映射；转换后的 `tls.ConnectionState` 不具备上游内部导出密钥状态，请勿对其调用 ExportKeyingMaterial。响应 Request 包含上游最终请求的 URL 和头；调试的一次外部 Do 中，内部重定向显示为 Trace 尝试，快照 URL 为初始 URL。
 
 首版验证范围是 HTTP/1.1、HTTP/2，示例禁用 HTTP/3。不要为流式下载开启上游 `tls_client.WithDebug()`，它会将完整正文读入内存；使用 httpc 的有界日志。

@@ -185,7 +185,15 @@ func (c *Client) debugBody(req *http.Request) string {
 	if err != nil || len(data) > maxDebugBody {
 		return "[omitted: unreadable body or size exceeds 64 KiB]"
 	}
-	mediaType, params, err := mime.ParseMediaType(req.Header.Get("Content-Type"))
+	contentTypes, _ := headerValuesFold(req.Header, "Content-Type")
+	if len(contentTypes) > 1 {
+		return "[omitted: ambiguous content type]"
+	}
+	contentType := ""
+	if len(contentTypes) == 1 {
+		contentType = contentTypes[0]
+	}
+	mediaType, params, err := mime.ParseMediaType(contentType)
 	if len(c.debugKeys) == 0 && mediaType != "multipart/form-data" {
 		if !utf8.Valid(data) {
 			return "[omitted: binary body]"

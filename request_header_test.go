@@ -104,6 +104,73 @@ func TestRequestHeaderSemantics(t *testing.T) {
 	}
 }
 
+func TestRequestRawHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure func(*Request) *Request
+		want      http.Header
+	}{
+		{"append exact key", func(r *Request) *Request {
+			return r.SetHeaderRaw("x-tag", "one").AddHeaderRaw("x-tag", "two")
+		}, http.Header{"x-tag": {"one", "two"}}},
+		{"replace exact key", func(r *Request) *Request {
+			return r.AddHeaderRaw("x-tag", "old").AddHeaderRaw("X-Tag", "separate").SetHeaderRaw("x-tag", "new")
+		}, http.Header{"x-tag": {"new"}, "X-Tag": {"separate"}}},
+		{"mix normal and raw", func(r *Request) *Request {
+			return r.SetHeaderRaw("x-tag", "raw").SetHeader("x-tag", "normal").AddHeader("X-TAG", "more")
+		}, http.Header{"x-tag": {"raw"}, "X-Tag": {"normal", "more"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var sent *http.Request
+			client := NewClient()
+			client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
+				sent = r
+				return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+			})
+			req := NewRequest(client).SetURL("http://example.test")
+			req.header = nil
+			if tc.configure(req) != req {
+				t.Fatal("setter changed request instance")
+			}
+			if _, _, err := req.Send().End(); err != nil {
+				t.Fatal(err)
+			}
+			want := tc.want.Clone()
+			want.Set("User-Agent", DefaultUserAgent)
+			if !reflect.DeepEqual(sent.Header, want) {
+				t.Fatalf("sent=%v want=%v", sent.Header, want)
+			}
+			req.SetHeaderRaw("x-tag", "later").AddHeaderRaw("X-Tag", "later")
+			if !reflect.DeepEqual(sent.Header, want) {
+				t.Fatal("builder changed the sent header map")
+			}
+		})
+	}
+}
+
+func TestRawHeadersOverrideDefaults(t *testing.T) {
+	for _, value := range []string{"custom", ""} {
+		t.Run(value, func(t *testing.T) {
+			var sent *http.Request
+			client := NewClient()
+			client.client.Transport = testRoundTripper(func(r *http.Request) (*http.Response, error) {
+				sent = r
+				return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+			})
+			_, _, err := NewRequest(client).SetURL("http://example.test").
+				SetBody(body.NewURLEncode().SetData("key", "value")).
+				AddHeaderRaw("uSeR-aGeNt", value).SetHeaderRaw("content-type", value).Send().End()
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := http.Header{"uSeR-aGeNt": {value}, "content-type": {value}}
+			if !reflect.DeepEqual(sent.Header, want) {
+				t.Fatalf("sent=%v want=%v", sent.Header, want)
+			}
+		})
+	}
+}
+
 func TestSentHeadersDoNotShareBuilderValues(t *testing.T) {
 	var sent *http.Request
 	client := NewClient()
