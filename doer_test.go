@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptrace"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -46,6 +48,74 @@ func TestExternalBackend(t *testing.T) {
 	c.CloseIdleConnections()
 	if d.closes != 1 {
 		t.Fatal(d.closes)
+	}
+}
+
+func TestBackendUserAgentPolicy(t *testing.T) {
+	for _, backendUA := range []bool{false, true} {
+		for _, direct := range []bool{false, true} {
+			for _, tc := range []struct {
+				name, key, value string
+			}{
+				{"missing", "", ""},
+				{"custom", "User-Agent", "custom-agent"},
+				{"mixed case", "uSeR-aGeNt", "custom-agent"},
+				{"explicit default value", "user-agent", DefaultUserAgent},
+				{"empty", "user-agent", ""},
+			} {
+				t.Run(tc.name+"/backend="+fmt.Sprint(backendUA)+"/direct="+fmt.Sprint(direct), func(t *testing.T) {
+					var sent http.Header
+					var options []DoerOption
+					if backendUA {
+						options = append(options, WithBackendUserAgent())
+					}
+					client, err := NewClientWithDoer(&testDoer{send: func(req *http.Request) (*http.Response, error) {
+						sent = req.Header.Clone()
+						return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+					}}, options...)
+					if err != nil {
+						t.Fatal(err)
+					}
+					headers := make(http.Header)
+					if tc.key != "" {
+						headers[tc.key] = []string{tc.value}
+					}
+					if direct {
+						req, err := http.NewRequest("GET", "http://example.test", nil)
+						if err != nil {
+							t.Fatal(err)
+						}
+						req.Header = headers.Clone()
+						resp, err := client.Do(req)
+						if err != nil {
+							t.Fatal(err)
+						}
+						_ = resp.Body.Close()
+						if !reflect.DeepEqual(req.Header, headers) {
+							t.Fatal("policy changed caller headers")
+						}
+					} else {
+						req := NewRequest(client).SetURL("http://example.test")
+						if tc.key != "" {
+							req.SetHeaderRaw(tc.key, tc.value)
+						}
+						if _, _, err := req.Send().End(); err != nil {
+							t.Fatal(err)
+						}
+						if !reflect.DeepEqual(req.header, headers) {
+							t.Fatal("policy changed builder headers")
+						}
+					}
+					want := headers.Clone()
+					if tc.key == "" && !backendUA {
+						want.Set("User-Agent", DefaultUserAgent)
+					}
+					if !reflect.DeepEqual(sent, want) {
+						t.Fatalf("sent=%v want=%v", sent, want)
+					}
+				})
+			}
+		}
 	}
 }
 

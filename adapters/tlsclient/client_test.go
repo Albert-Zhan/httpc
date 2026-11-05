@@ -50,6 +50,151 @@ func newTestClient(t *testing.T, h1 bool) (tls_client.HttpClient, *httpc.Client)
 	return raw, c
 }
 
+func TestBackendUserAgentDefaults(t *testing.T) {
+	for _, h1 := range []bool{true, false} {
+		t.Run(fmt.Sprintf("http1=%v", h1), func(t *testing.T) {
+			seen := make(chan http.Header, 1)
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				seen <- r.Header.Clone()
+				_, _ = io.WriteString(w, "ok")
+			}))
+			server.EnableHTTP2 = !h1
+			server.StartTLS()
+			defer server.Close()
+			for _, defaults := range []bool{false, true} {
+				t.Run(fmt.Sprintf("defaults=%v", defaults), func(t *testing.T) {
+					opts := []tls_client.HttpClientOption{tls_client.WithInsecureSkipVerify(), tls_client.WithDisableHttp3(), tls_client.WithTimeoutSeconds(5)}
+					if h1 {
+						opts = append(opts, tls_client.WithForceHttp1())
+					}
+					if defaults {
+						opts = append(opts, tls_client.WithDefaultHeaders(fhttp.Header{
+							"User-Agent": {"backend-agent"}, "X-Default": {"from-defaults"},
+							fhttp.HeaderOrderKey: {"x-default", "user-agent"},
+						}))
+					}
+					raw, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(), opts...)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer raw.Close()
+					client, err := New(raw, WithBackendUserAgent())
+					if err != nil {
+						t.Fatal(err)
+					}
+					var logs bytes.Buffer
+					client.SetDebugOutput(&logs)
+					for _, tc := range []struct {
+						name                   string
+						headers                fhttp.Header
+						payload, order, cookie bool
+					}{
+						{name: "empty"},
+						{name: "custom UA", headers: fhttp.Header{"user-agent": {"custom-agent"}}},
+						{name: "explicit version UA", headers: fhttp.Header{"User-Agent": {httpc.DefaultUserAgent}}},
+						{name: "empty UA", headers: fhttp.Header{"user-agent": {""}}},
+						{name: "other header", headers: fhttp.Header{"X-Only": {"kept"}}},
+						{name: "typed body", payload: true},
+						{name: "order control", order: true},
+						{name: "cookie", cookie: true},
+					} {
+						t.Run(tc.name, func(t *testing.T) {
+							method, payload := "GET", ""
+							if tc.payload {
+								method, payload = "POST", `{"keep":"value"}`
+							}
+							headers := tc.headers.Clone()
+							if headers == nil {
+								headers = make(fhttp.Header)
+							}
+							if tc.payload {
+								headers.Set("Content-Type", body.JSON)
+							}
+							if tc.order {
+								headers[fhttp.HeaderOrderKey] = []string{"user-agent", "x-default"}
+							}
+							native, err := fhttp.NewRequest(method, server.URL, strings.NewReader(payload))
+							if err != nil {
+								t.Fatal(err)
+							}
+							native.Header = headers.Clone()
+							if tc.cookie {
+								native.AddCookie(&fhttp.Cookie{Name: "manual", Value: "kept"})
+								headers = native.Header.Clone()
+							}
+							nresp, err := raw.Do(native)
+							if err != nil {
+								t.Fatal(err)
+							}
+							_, err = io.Copy(io.Discard, nresp.Body)
+							_ = nresp.Body.Close()
+							if err != nil {
+								t.Fatal(err)
+							}
+							want := <-seen
+							for _, direct := range []bool{false, true} {
+								logs.Reset()
+								if direct {
+									request, err := http.NewRequestWithContext(httpc.WithDebug(context.Background()), method, server.URL, strings.NewReader(payload))
+									if err != nil {
+										t.Fatal(err)
+									}
+									request.Header = http.Header(headers.Clone())
+									response, err := client.Do(request)
+									if err != nil {
+										t.Fatal(err)
+									}
+									_, err = io.Copy(io.Discard, response.Body)
+									_ = response.Body.Close()
+									if err != nil {
+										t.Fatal(err)
+									}
+								} else {
+									request := httpc.NewRequest(client).SetURL(server.URL).SetMethod(method).SetDebug(true)
+									for name, values := range tc.headers {
+										request.SetHeaderRaw(name, values[0])
+									}
+									if tc.payload {
+										data := body.NewRawData()
+										data.SetData(payload, body.JSON)
+										request.SetBody(data)
+									}
+									if tc.order {
+										request.SetHeaderOrder("user-agent", "x-default")
+									}
+									if tc.cookie {
+										request.SetCookieList([]*http.Cookie{{Name: "manual", Value: "kept"}})
+									}
+									if _, _, err := request.Send().End(); err != nil {
+										t.Fatal(err)
+									}
+								}
+								if got := <-seen; !reflect.DeepEqual(got, want) {
+									t.Fatalf("direct=%v got=%v native=%v", direct, got, want)
+								}
+								if !strings.Contains(logs.String(), "Header-Source: transport") {
+									t.Fatal(logs.String())
+								}
+							}
+						})
+					}
+					legacy, err := New(raw)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, _, err := httpc.NewRequest(legacy).SetURL(server.URL).Send().End(); err != nil {
+						t.Fatal(err)
+					}
+					if got := <-seen; got.Get("User-Agent") != httpc.DefaultUserAgent || got.Get("X-Default") != "" {
+						t.Fatalf("default mode changed: %v", got)
+					}
+				})
+			}
+		})
+	}
+}
+
 func TestRequestRedirectAndTrace(t *testing.T) {
 	for _, h1 := range []bool{true, false} {
 		t.Run(fmt.Sprintf("http1=%v", h1), func(t *testing.T) {

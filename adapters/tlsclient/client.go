@@ -17,13 +17,22 @@ import (
 	utls "github.com/bogdanfinn/utls"
 )
 
+// Option 配置 httpc 的外部后端发送策略，不修改 raw 的连接或会话配置。
+type Option = httpc.DoerOption
+
+// WithBackendUserAgent 将默认 UA 交给 raw，不再补充 httpc 的版本 UA。
+// 请求头完全为空时，raw 可采用其 WithDefaultHeaders；非空时沿用原生规则，不逐字段合并。
+// 显式 UA（包括空值）保留；raw 没有默认头时使用其原生 UA 默认行为。
+func WithBackendUserAgent() Option { return httpc.WithBackendUserAgent() }
+
 // New 包装已配置的 tls-client。代理、TLS、Jar、重定向和超时由 raw 管理。
+// 默认缺少 UA 时补充 httpc.DefaultUserAgent，可用 WithBackendUserAgent 交给 raw。
 // 下载大文件时不要开启上游 WithDebug，其实现会读取完整正文。
-func New(raw tls_client.HttpClient) (*httpc.Client, error) {
+func New(raw tls_client.HttpClient, options ...Option) (*httpc.Client, error) {
 	if raw == nil || (reflect.ValueOf(raw).Kind() == reflect.Pointer && reflect.ValueOf(raw).IsNil()) {
 		return nil, fmt.Errorf("%w: tls-client is nil", httpc.ErrInvalidRequest)
 	}
-	return httpc.NewClientWithDoer(&backend{raw: raw})
+	return httpc.NewClientWithDoer(&backend{raw: raw}, options...)
 }
 
 type backend struct{ raw tls_client.HttpClient }
@@ -97,6 +106,27 @@ func toRequest(req *http.Request) (*fhttp.Request, error) {
 }
 
 func toResponse(resp *fhttp.Response) *http.Response {
+	var converter responseConverter
+	// 普通响应不分配缓存；有来源链时保留共享对象，并防止循环引用导致无限递归。
+	if resp != nil && resp.Request != nil && resp.Request.Response != nil {
+		converter.responses = make(map[*fhttp.Response]*http.Response)
+		converter.requests = make(map[*fhttp.Request]*http.Request)
+	}
+	return converter.response(resp)
+}
+
+type responseConverter struct {
+	responses map[*fhttp.Response]*http.Response
+	requests  map[*fhttp.Request]*http.Request
+}
+
+func (c *responseConverter) response(resp *fhttp.Response) *http.Response {
+	if resp == nil {
+		return nil
+	}
+	if converted := c.responses[resp]; converted != nil {
+		return converted
+	}
 	r := &http.Response{
 		Status: resp.Status, StatusCode: resp.StatusCode,
 		Proto: resp.Proto, ProtoMajor: resp.ProtoMajor, ProtoMinor: resp.ProtoMinor,
@@ -104,22 +134,37 @@ func toResponse(resp *fhttp.Response) *http.Response {
 		ContentLength: resp.ContentLength, TransferEncoding: slices.Clone(resp.TransferEncoding),
 		Close: resp.Close, Uncompressed: resp.Uncompressed, Trailer: http.Header(resp.Trailer.Clone()),
 	}
+	if c.responses != nil {
+		c.responses[resp] = r
+	}
 	if resp.TLS != nil {
 		state := standardTLS(*resp.TLS)
 		r.TLS = &state
 	}
-	if resp.Request != nil {
-		q := resp.Request
-		r.Request = (&http.Request{
-			Method: q.Method, URL: q.URL, Proto: q.Proto, ProtoMajor: q.ProtoMajor, ProtoMinor: q.ProtoMinor,
-			Header: http.Header(q.Header.Clone()), Host: q.Host, ContentLength: q.ContentLength,
-			TransferEncoding: slices.Clone(q.TransferEncoding), Close: q.Close,
-			Trailer: http.Header(q.Trailer.Clone()), Body: q.Body, GetBody: q.GetBody,
-		}).WithContext(q.Context())
-	}
+	r.Request = c.request(resp.Request)
 	if r.Body != nil && resp.StatusCode != http.StatusSwitchingProtocols {
 		r.Body = &syncBody{ReadCloser: r.Body, sync: func() { r.Trailer = http.Header(resp.Trailer.Clone()) }}
 	}
+	return r
+}
+
+func (c *responseConverter) request(req *fhttp.Request) *http.Request {
+	if req == nil {
+		return nil
+	}
+	if converted := c.requests[req]; converted != nil {
+		return converted
+	}
+	r := (&http.Request{
+		Method: req.Method, URL: req.URL, Proto: req.Proto, ProtoMajor: req.ProtoMajor, ProtoMinor: req.ProtoMinor,
+		Header: http.Header(req.Header.Clone()), Host: req.Host, ContentLength: req.ContentLength,
+		TransferEncoding: slices.Clone(req.TransferEncoding), Close: req.Close,
+		Trailer: http.Header(req.Trailer.Clone()), Body: req.Body, GetBody: req.GetBody,
+	}).WithContext(req.Context())
+	if c.requests != nil {
+		c.requests[req] = r
+	}
+	r.Response = c.response(req.Response)
 	return r
 }
 

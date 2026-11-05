@@ -84,7 +84,7 @@ fmt.Println(resp.StatusCode, text)
 | `SetBasicAuth(user, password)` | 设置 Basic Auth，与手动 Authorization 以后一次设置为准 |
 | `SetBody(data)` | 设置正文，自动采用其 Content-Type；手动设置的 Content-Type 优先 |
 
-未设置 User-Agent 时使用 `httpc/` 加 `httpc.Version`，即 `httpc.DefaultUserAgent`；HTTP/1.1 和 HTTP/2 一致。自定义值优先，`SetHeader("User-Agent", "")` 可禁止发送该头。
+未设置 User-Agent 时默认使用 `httpc/` 加 `httpc.Version`，即 `httpc.DefaultUserAgent`；HTTP/1.1 和 HTTP/2 一致。自定义值优先，`SetHeader("User-Agent", "")` 可禁止发送该头。外部后端可在创建客户端时通过 `WithBackendUserAgent()` 选择由后端处理默认 UA，显式设置的值仍保留。
 
 `SetHost("api.example.com:8443")` 只改变请求声明的主机，不改变 URL 的连接目标或 TLS SNI。它接受主机名或主机名:端口；格式无效时 Send 返回 ErrInvalidRequest。`SetHeader("Host", ...)` 不能替代它。SetHost 与 SetURL 的调用顺序无关；清除覆盖可调用 `SetHost("")`。
 
@@ -287,7 +287,9 @@ fmt.Println(resp.StatusCode, text)
 
 外部后端自行管理代理、TLS、Jar、重定向和总超时。httpc 的 `SetProxy`、`ClearProxy`、`SetSkipVerify`、`SetTimeout`、`SetCookieJar`、`SetRedirect`、`CustomizeTransport`、`WrapTransport` 仅用于默认后端；在外部后端上调用会记录 `ErrUnsupportedBackend` 并阻止发送，需在 raw 上配置后重新创建包装客户端。日志配置和每个 Request 的头、正文、取消、响应限额继续可用。
 
-`CloseIdleConnections()` 会转发给外部后端的同名方法；不会调用其 `Close()`。适配器保留流式正文及响应 Trailer，并桥接上游 fhttp Trace 到标准 httptrace，同时保留原有两种 Trace 回调。TLS 状态只映射公共字段，不能通过转换后的状态导出密钥材料。
+默认仍补充版本 UA；`httpc.NewClientWithDoer(backend, httpc.WithBackendUserAgent())` 可将默认 UA 交给后端，`Request.Send()` 和 `Client.Do()` 使用相同策略。tls-client 对应入口为 `tlsclient.New(raw, tlsclient.WithBackendUserAgent())`。此选项不会读取或合并后端默认头；tls-client 的 WithDefaultHeaders 仅在请求头完全为空时生效，正文类型、Cookie 或排序控制键等已产生请求头时仍遵循其原生规则。
+
+`CloseIdleConnections()` 会转发给外部后端的同名方法；不会调用其 `Close()`。适配器保留流式正文、响应 Trailer 及 raw 返回的重定向来源链；`resp.Request.Response` 指向导致当前请求产生的上一份响应，可沿其 Request.Response 继续向前查看，无来源时为 nil。历史正文保持 raw 已有的关闭状态，不重新读取或缓存。适配器桥接上游 fhttp Trace 到标准 httptrace，同时保留原有两种 Trace 回调。TLS 状态只映射公共字段，不能通过转换后的状态导出密钥材料。
 
 日志可以采集上游实际发出的写入事件，保留调用方 `Send(ctx)` 中的 Trace。上游专用拨号器可能不提供部分 DNS、TLS 事件，未发出的事件不会被补造；丢弃 context 或不发 Trace 的自定义后端会退回请求快照。外部后端的一次 Do 中若包含内部重定向，日志按 Trace 尝试记录，Hop 不代表其内部每一跳，快照 URL 仍为传入的 URL。
 
