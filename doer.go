@@ -14,13 +14,29 @@ type Doer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
+// DoerOption 配置 httpc 的外部后端发送策略，不修改后端自身配置。
+type DoerOption func(*Client)
+
+// WithBackendUserAgent 将默认 UA 交给外部后端，httpc 不再自动补充 DefaultUserAgent。
+// 显式设置的 UA（包括空值）保持原样；此选项不会合并或读取后端默认头。
+func WithBackendUserAgent() DoerOption {
+	return func(c *Client) { c.backendUserAgent = true }
+}
+
 // NewClientWithDoer 使用外部发送后端，不额外叠加 http.Client 的策略。
 // 标准 Transport、代理、TLS、Jar、重定向和超时配置应在后端上完成。
-func NewClientWithDoer(d Doer) (*Client, error) {
+// 默认缺少 UA 时补充 DefaultUserAgent，可通过 WithBackendUserAgent 交给后端处理。
+func NewClientWithDoer(d Doer, options ...DoerOption) (*Client, error) {
 	if d == nil || nilValue(d) {
 		return nil, wrapError(ErrInvalidRequest, "configure backend", fmt.Errorf("backend is nil"))
 	}
-	return &Client{doer: d, debugOut: os.Stdout}, nil
+	c := &Client{doer: d, debugOut: os.Stdout}
+	for _, option := range options {
+		if option != nil {
+			option(c)
+		}
+	}
+	return c, nil
 }
 
 func nilValue(v any) bool {
@@ -47,7 +63,8 @@ func WithDebug(ctx context.Context) context.Context {
 	return context.WithValue(ctx, debugEnabledKey{}, true)
 }
 
-// Do 发送标准库请求，未设置 User-Agent 时补充 DefaultUserAgent。
+// Do 发送标准库请求，默认在缺少 User-Agent 时补充 DefaultUserAgent。
+// 后端 UA 模式保持调用方的头信息，由后端处理默认 UA。
 // 调用方负责关闭成功响应的 Body；4xx/5xx 状态码本身不产生错误。
 func (c *Client) Do(req *http.Request) (*http.Response, error) {
 	debug := false
@@ -84,8 +101,10 @@ func (c *Client) do(req *http.Request, debug bool) (*http.Response, error) {
 	if cloned.Header == nil {
 		cloned.Header = make(http.Header)
 	}
-	if _, explicit := headerValuesFold(cloned.Header, "User-Agent"); !explicit {
-		cloned.Header.Set("User-Agent", DefaultUserAgent)
+	if !c.backendUserAgent {
+		if _, explicit := headerValuesFold(cloned.Header, "User-Agent"); !explicit {
+			cloned.Header.Set("User-Agent", DefaultUserAgent)
+		}
 	}
 	var resp *http.Response
 	var err error

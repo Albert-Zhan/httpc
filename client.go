@@ -18,7 +18,7 @@ import (
 
 // Client 提供 HTTP 客户端配置和连接管理，配置完成后可并发复用。
 // 创建后不应复制，发送请求期间不要修改配置。
-// NewClientWithDoer 创建的外部后端只接受日志配置；其他客户端配置须在后端上完成。
+// 外部后端的连接和会话配置须在后端上完成，httpc 管理日志与默认 UA 策略。
 type Client struct {
 	client       *http.Client
 	doer         Doer
@@ -30,6 +30,8 @@ type Client struct {
 	transportErr error
 	closeMu      sync.Mutex
 	closing      atomic.Bool
+
+	backendUserAgent bool
 }
 
 // NewClient 创建并返回一个默认配置的客户端。

@@ -161,7 +161,7 @@ func (r *Request) SetResponseLimit(n int64) *Request {
 
 // Send 构建并发送请求，可选传入 context 控制取消和超时。
 // 省略 context 时使用 context.Background()。
-// 未显式设置 User-Agent 时使用 DefaultUserAgent。
+// 未显式设置 User-Agent 时默认使用 DefaultUserAgent；后端 UA 模式交给后端处理。
 // 每个 Request 只能调用一次 Send；重复调用返回 ErrInvalidRequest 并关闭未读取的响应体。
 func (r *Request) Send(ctxs ...context.Context) *Request {
 	if r.sendCalled {
@@ -252,9 +252,6 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 	r.request.Header = r.header.Clone()
 	if r.request.Header == nil {
 		r.request.Header = make(http.Header)
-	}
-	if _, explicit := headerValuesFold(r.request.Header, "User-Agent"); !explicit {
-		r.request.Header.Set("User-Agent", DefaultUserAgent)
 	}
 	if _, explicit := headerValuesFold(r.request.Header, "Content-Type"); contentType != "" && !explicit {
 		r.request.Header.Set("Content-Type", contentType)
