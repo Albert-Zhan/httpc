@@ -141,7 +141,7 @@ func TestStreamFormLazilyOpensAndClosesFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-finished
-	if _, err := opened.Stat(); !errors.Is(err, os.ErrClosed) {
+	if _, err := opened.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("active file remained open: %v", err)
 	}
 	if _, err := r.Read(make([]byte, 1)); !errors.Is(err, io.ErrClosedPipe) {
