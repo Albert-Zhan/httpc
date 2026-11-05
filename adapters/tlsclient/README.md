@@ -88,6 +88,8 @@ HTTP/2 名称仍为小写。特殊头和自动生成字段的最终写法、顺�
 
 正文、GetBody、长度、Host、多值头和 Trailer 保留，适配器不预读正文；响应 Trailer 在正文结束时同步。客户端传输选项和 End 方法对 gzip 的处理见[响应读取](../../README.md#读取响应)。
 
+大文件上传使用 [body.NewStreamFormData](../../README.md#正文与上传)，原生 Body、ContentLength 和 GetBody 会转交给 fhttp，支持 HTTP/1.1、HTTP/2 和 307/308 重放。长时间上传在 raw 配置 WithTimeoutSeconds(0)，并通过 Send(ctx) 控制任务期限。
+
 `resp.Request` 包含最终请求的 URL、头和 context；`resp.Request.Response` 指向最近一跳来源响应，可继续沿 Request.Response 向前查看，无来源时为 nil。历史 Body 保持 raw 已有的状态，不重新读取或缓存。
 
 标准 httptrace 与已有 fhttp Trace 回调会组合，只转发上游发出的事件。GotConn.Conn 是上游连接类型，不能断言为标准库的 `*tls.Conn`。Response.TLS 映射共有公开字段，不包含 uTLS 的内部导出密钥状态，不能用于 ExportKeyingMaterial。

@@ -239,6 +239,24 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 	if r.host != "" {
 		r.request.Host = r.host
 	}
+	if sized, ok := r.data.(interface{ ContentLength() int64 }); ok {
+		length := sized.ContentLength()
+		if length < -1 {
+			if r.request.Body != nil {
+				_ = r.request.Body.Close()
+			}
+			r.err = wrapError(ErrRequestBody, "set request body length", fmt.Errorf("ContentLength must be -1 or nonnegative"))
+			return r
+		}
+		r.request.ContentLength = length
+		if length == 0 && r.request.Body != nil {
+			_ = r.request.Body.Close()
+			r.request.Body = http.NoBody
+		}
+	}
+	if replayable, ok := r.data.(interface{ GetBody() (io.ReadCloser, error) }); ok {
+		r.request.GetBody = replayable.GetBody
+	}
 
 	r.request.Header = r.header.Clone()
 	if r.request.Header == nil {

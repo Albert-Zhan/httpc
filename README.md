@@ -86,7 +86,8 @@ Raw 方法主要用于 HTTP/1.1 名称大小写控制，建议配合 tls-client�
 | 构造器 | 用法与类型 |
 | --- | --- |
 | `body.NewURLEncode()` | `SetData(name, value)` 追加字段，编码为 application/x-www-form-urlencoded |
-| `body.NewFormData()` | `SetData(name, value)`、`SetFile(name, path)` 构建 multipart/form-data |
+| `body.NewFormData()` | 在内存中构建 multipart/form-data，支持字段和本地文件 |
+| `body.NewStreamFormData()` | 流式构建 multipart/form-data，按需读取本地普通文件 |
 | `body.NewRawData()` | `SetData(data, contentType)` 设置已编码的字符串、字节切片或 nil |
 
 ```go
@@ -100,9 +101,28 @@ fmt.Println(resp.StatusCode, text)
 
 Raw 不会自动序列化对象，JSON、protobuf 等数据应先编码。可使用 `body.Text`、`body.JSON`、`body.JavaScript`、`body.HTML`、`body.XML`、`body.Protobuf` 或自定义 MIME 类型；Protobuf 的值为 `application/x-protobuf`。字节切片会复制，nil 表示空正文，每次 SetData 替换此前内容和错误状态。
 
-Form 在内存中构建正文，文件须存在；自定义边界使用 SetBoundary，并在添加内容前调用。Encode 完成后不能再添加字段或文件。正文构建错误可通过 `Err()` 提前检查，Send 也会检查并阻止发送。
+Form 和 StreamForm 均使用 SetData 添加字段、SetFile 添加文件，支持同名字段和多个文件。自定义边界使用 SetBoundary，并在添加内容前调用。Encode 后不能再修改表单；Send 会在编码前后检查 `Err()`，构建失败时不发送。
 
-自定义正文实现 `body.Body` 的 `GetContentType() string` 和 `Encode() io.Reader`；可额外实现 `Err() error`，发送时会在编码前后检查。需要流式上传时，可使用自定义正文或[直接发送标准请求](#外部后端)。
+NewFormData 在 SetFile 时读取整个文件，适合小文件或需要保存内容快照的场景。大文件使用流式表单：
+
+```go
+form := body.NewStreamFormData().
+    SetData("description", "上传示例").
+    SetFile("file", "./archive.zip")
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+defer cancel()
+client.SetTimeout(0)
+resp, text, err := httpc.NewRequest(client).
+    SetMethod("POST").SetURL("https://example.com/upload").SetBody(form).Send(ctx).End()
+if err != nil { fmt.Println(err); return }
+fmt.Println(resp.StatusCode, text)
+```
+
+StreamForm 的 SetFile 只记录路径，Encode 检查文件元信息，发送时依次打开、读取和关闭文件；内存占用不随文件内容大小增长，普通字段与 multipart 元信息仍缓存在内存中。准确的 Content-Length 包含整个 multipart 正文，GetBody 支持 307/308 重定向重放。从 Encode 到整个发送链结束，源文件须保持不变；检测到文件身份、大小或修改时间变化时返回 ErrUploadFile，检查不能代替文件快照。发送中的文件读取错误通过 Send 返回，不写回 StreamForm.Err。
+
+文件关闭由后端负责，取消与超时通过 Send(ctx) 控制；直接调用 Encode 或 GetBody 时须自行关闭 Reader。长时间上传应在相应后端禁用总超时，再用任务 context 控制期限。标准后端和 tls-client 的 HTTP/1.1、HTTP/2 均支持该用法；调试沿用有界副本预览，不输出文件内容。tls-client 使用 httpc 调试，避免开启上游 WithDebug。
+
+自定义正文实现 `body.Body` 的 `GetContentType() string` 和 `Encode() io.Reader`。可选 `Err() error` 报告构建错误；编码后可用 `ContentLength() int64` 提供长度（-1 未知、0 空正文），用 `GetBody() (io.ReadCloser, error)` 提供独立副本用于重放。未实现可选方法的正文继续使用标准库的推断规则，参见[直接发送标准请求](#外部后端)。
 
 ## 读取响应
 

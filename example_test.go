@@ -3,11 +3,15 @@ package httpc_test
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Albert-Zhan/httpc/v2"
+	"github.com/Albert-Zhan/httpc/v2/body"
 )
 
 func ExampleError() {
@@ -71,4 +75,40 @@ func ExampleClient_WrapTransport() {
 	fmt.Println(text)
 	// Output:
 	// demo
+}
+
+func ExampleRequest_streamUpload() {
+	dir, err := os.MkdirTemp("", "httpc-upload-")
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer os.RemoveAll(dir)
+	path := filepath.Join(dir, "hello.txt")
+	if err := os.WriteFile(path, []byte("hello upload"), 0600); err != nil {
+		fmt.Println(err)
+		return
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		file, _, err := r.FormFile("file")
+		if err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		defer file.Close()
+		defer r.MultipartForm.RemoveAll()
+		_, _ = io.Copy(w, file)
+	}))
+	defer server.Close()
+	client := httpc.NewClient()
+	defer client.CloseIdleConnections()
+	form := body.NewStreamFormData().SetData("description", "demo").SetFile("file", path)
+	resp, text, err := httpc.NewRequest(client).SetMethod("POST").SetURL(server.URL).SetBody(form).Send().End()
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(resp.StatusCode, text)
+	// Output:
+	// 200 hello upload
 }

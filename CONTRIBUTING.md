@@ -44,7 +44,7 @@ go test -race -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out 
 | `transport_test.go` | 包装顺序、配置校验、独立 Transport 和空闲连接管理 |
 | `request_test.go` | URL、查询参数和发送状态 |
 | `request_header_test.go` | 请求头、默认 User-Agent 和 Cookie |
-| `request_body_test.go` | 正文发送、上传校验和重定向重放 |
+| `request_body_test.go` | 正文发送、流式上传、调用状态、取消与重定向重放 |
 | `response_test.go` | 响应读取、Writer 输出、调用方文件管理和读取状态 |
 | `response_gzip_test.go` | gzip 解码、空正文、截断和错误链 |
 | `response_limit_test.go` | 正文大小限制、流式边界和压缩响应限额 |
@@ -52,9 +52,11 @@ go test -race -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out 
 | `debug_transport_test.go` | 发送阶段采集、重定向、重试、调用方 Trace 和包装器集成 |
 | `test_helpers_test.go` | 多个测试文件共用的 Transport、读写替身、响应构造及错误断言 |
 | `api_test.go`、`example_test.go` | 使用 `httpc_test` 包验证 v2 公共接口和可执行示例 |
-| `body/*_test.go` | 各类正文的编码和构建错误 |
+| `body/*_test.go` | 正文编码、构建错误、流式文件读取和资源释放 |
 | `downloader/*_test.go` | 流式下载、分段协议、降级、取消、限额、进度和文件提交 |
 | `adapters/tlsclient/*_test.go` | HTTP/1.1、HTTP/2、转换、重定向、Cookie、Trace 和下载器集成 |
+
+适配器的流式上传、重放和取消用例维护在其 `request_body_test.go` 中。
 
 使用 `Test<行为>` 命名测试，用具名 `t.Run` 区分同一行为的输入；不按修复日期、问题编号创建零散文件。辅助函数调用 `t.Helper()`，仅供单个模块使用的辅助类型留在该模块的测试文件中。通过 `t.Cleanup`、`t.TempDir` 或 `defer` 释放连接、临时文件和本地服务。
 
