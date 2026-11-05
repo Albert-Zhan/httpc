@@ -95,6 +95,30 @@ func (r *Request) AddHeader(name, value string) *Request {
 	return r
 }
 
+// SetHeaderRaw 保留 name 的大小写，替换该精确键的全部值，不合并其他大小写的键。
+// 建议用于 tls-client 后端，等价于直接给 fhttp.Header 的 map 键赋值。
+// 标准库后端对 User-Agent、Cookie、压缩等特殊头的处理可能不同；HTTP/2 名称仍为小写。
+// 名称、值及后端控制键由发送后端校验和处理；此方法不控制请求头顺序。
+func (r *Request) SetHeaderRaw(name, value string) *Request {
+	if r.header == nil {
+		r.header = make(http.Header)
+	}
+	r.header[name] = []string{value}
+	return r
+}
+
+// AddHeaderRaw 保留 name 的大小写，向该精确键追加值，不合并其他大小写的键。
+// 建议用于 tls-client 后端，等价于向 fhttp.Header 的 map 键追加值。
+// 标准库后端对特殊头的处理可能不同；HTTP/2 名称仍为小写。
+// 名称、值及后端控制键由发送后端校验和处理；此方法不控制请求头顺序。
+func (r *Request) AddHeaderRaw(name, value string) *Request {
+	if r.header == nil {
+		r.header = make(http.Header)
+	}
+	r.header[name] = append(r.header[name], value)
+	return r
+}
+
 // SetBasicAuth 设置 HTTP Basic Auth 认证头。
 func (r *Request) SetBasicAuth(username, password string) *Request {
 	auth := username + ":" + password
@@ -222,10 +246,10 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 	if r.request.Header == nil {
 		r.request.Header = make(http.Header)
 	}
-	if _, explicit := r.request.Header["User-Agent"]; !explicit {
+	if _, explicit := headerValuesFold(r.request.Header, "User-Agent"); !explicit {
 		r.request.Header.Set("User-Agent", DefaultUserAgent)
 	}
-	if _, explicit := r.request.Header["Content-Type"]; contentType != "" && !explicit {
+	if _, explicit := headerValuesFold(r.request.Header, "Content-Type"); contentType != "" && !explicit {
 		r.request.Header.Set("Content-Type", contentType)
 	}
 	for i, v := range r.cookies {
@@ -241,6 +265,17 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 
 	r.response, r.err = r.httpc.do(r.request, r.debug)
 	return r
+}
+
+// headerValuesFold 只用于读取；保留头映射中的原始键名及显式空值。
+func headerValuesFold(headers http.Header, name string) (values []string, present bool) {
+	for key, items := range headers {
+		if strings.EqualFold(key, name) {
+			values = append(values, items...)
+			present = true
+		}
+	}
+	return values, present
 }
 
 // Host 是 authority，不接受完整 URL 或可分隔请求头的字符。

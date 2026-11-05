@@ -48,6 +48,49 @@ func TestUserAgentInDebugLog(t *testing.T) {
 	}
 }
 
+func TestDebugRawHeaders(t *testing.T) {
+	for _, ambiguous := range []bool{false, true} {
+		t.Run(fmt.Sprint(ambiguous), func(t *testing.T) {
+			seen := make(chan string, 1)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				data, _ := io.ReadAll(r.Body)
+				seen <- string(data)
+			}))
+			defer server.Close()
+			var logs bytes.Buffer
+			client := NewClient().SetDebugOutput(&logs).AddDebugSensitiveFields("x-token", "password")
+			defer client.CloseIdleConnections()
+			payload := `{"password":"body-secret","keep":"visible"}`
+			req := NewRequest(client).SetURL(server.URL).SetMethod("POST").
+				SetBody(rawDebugBody(payload, body.JSON)).SetHeaderRaw("content-type", "application/json").
+				SetHeaderRaw("x-token", "header-secret").SetDebug(true)
+			if ambiguous {
+				req.SetHeaderRaw("CONTENT-TYPE", "text/plain")
+			}
+			if _, _, err := req.Send().End(); err != nil {
+				t.Fatal(err)
+			}
+			if got := <-seen; got != payload {
+				t.Fatalf("logging changed body: %q", got)
+			}
+			output := logs.String()
+			if strings.Contains(output, "header-secret") || strings.Contains(output, "body-secret") ||
+				!strings.Contains(output, `"x-token":["[REDACTED]"]`) ||
+				!strings.Contains(output, `"content-type":["application/json"]`) ||
+				!strings.Contains(output, "Header-Source: transport") {
+				t.Fatal(output)
+			}
+			if ambiguous {
+				if !strings.Contains(output, "[omitted: ambiguous content type]") {
+					t.Fatal(output)
+				}
+			} else if !strings.Contains(output, `"keep":"visible"`) {
+				t.Fatal(output)
+			}
+		})
+	}
+}
+
 func TestDebugRedactsWithoutChangingRequests(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "upload.txt")
 	if err := os.WriteFile(file, []byte("file-content-secret"), 0600); err != nil {

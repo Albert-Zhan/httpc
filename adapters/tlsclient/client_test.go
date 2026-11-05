@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httptrace"
@@ -14,7 +15,10 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -144,6 +148,185 @@ func TestRequestHostThroughAdapter(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRawHeadersMatchNative(t *testing.T) {
+	for _, h1 := range []bool{true, false} {
+		for _, tc := range []struct {
+			name, userAgent string
+			redirect        bool
+		}{
+			{"custom", "raw-agent", false},
+			{"empty UA", "", false},
+			{"redirect", "raw-agent", true},
+		} {
+			t.Run(fmt.Sprintf("http1=%v/%s", h1, tc.name), func(t *testing.T) {
+				payload := `{"password":"body-secret","keep":"visible"}`
+				server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					data, err := io.ReadAll(r.Body)
+					if err != nil || string(data) != payload || r.UserAgent() != tc.userAgent || len(r.Header.Values("Content-Type")) != 1 {
+						t.Errorf("body=%q UA=%q headers=%v err=%v", data, r.UserAgent(), r.Header, err)
+					}
+					if h1 {
+						// 每跳独立连接，便于捕获各次请求的原始 HTTP/1.1 头行。
+						w.Header().Set("Connection", "close")
+					}
+					if r.URL.Path == "/start" {
+						http.SetCookie(w, &http.Cookie{Name: "session", Value: "kept", Path: "/"})
+						w.Header().Set("Location", "/finish")
+						w.WriteHeader(http.StatusTemporaryRedirect)
+						return
+					}
+					_, _ = io.WriteString(w, "ok")
+				}))
+				wire := make(chan string, 8)
+				if h1 {
+					server.Listener = &headerCaptureListener{Listener: server.Listener, headers: wire}
+					server.Start()
+				} else {
+					server.EnableHTTP2 = true
+					server.StartTLS()
+				}
+				defer server.Close()
+				native, _ := newTestClient(t, h1)
+				_, wrapped := newTestClient(t, h1)
+				var logs bytes.Buffer
+				wrapped.SetDebugOutput(&logs).AddDebugSensitiveFields("x-token", "password")
+				target := server.URL + "/finish"
+				if tc.redirect {
+					target = server.URL + "/start"
+				}
+				headers := fhttp.Header{
+					"user-agent": {tc.userAgent}, "content-type": {"application/json"},
+					"content-length": {fmt.Sprint(len(payload))}, "Accept-Encoding": {"identity"},
+					"x-device-id": {"abc", "def"}, "X-Device-Id": {"separate"},
+					"x-token": {"header-secret"}, "cookie": {"manual=kept"},
+					fhttp.HeaderOrderKey:  {"host", "user-agent", "content-type", "content-length", "x-device-id", "x-token", "accept-encoding", "cookie"},
+					fhttp.PHeaderOrderKey: {":method", ":authority", ":scheme", ":path"},
+				}
+				var mu sync.Mutex
+				var nativeFields, wrappedFields []string
+				capture := func(dst *[]string, name string, values []string) {
+					mu.Lock()
+					defer mu.Unlock()
+					for _, value := range values {
+						*dst = append(*dst, name+": "+value)
+					}
+				}
+				nativeCtx := ftrace.WithClientTrace(context.Background(), &ftrace.ClientTrace{
+					WroteHeaderField: func(name string, values []string) { capture(&nativeFields, name, values) },
+				})
+				nativeReq, err := fhttp.NewRequestWithContext(nativeCtx, "POST", target, strings.NewReader(payload))
+				if err != nil {
+					t.Fatal(err)
+				}
+				nativeReq.Header = headers.Clone()
+				nativeResp, err := native.Do(nativeReq)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, readErr := io.Copy(io.Discard, nativeResp.Body)
+				_ = nativeResp.Body.Close()
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
+					WroteHeaderField: func(name string, values []string) { capture(&wrappedFields, name, values) },
+				})
+				data := body.NewRawData()
+				data.SetData(payload, body.JSON)
+				req := httpc.NewRequest(wrapped).SetURL(target).SetMethod("POST").SetBody(data).SetDebug(true)
+				for name, values := range headers {
+					req.SetHeaderRaw(name, values[0])
+					for _, value := range values[1:] {
+						req.AddHeaderRaw(name, value)
+					}
+				}
+				resp, text, err := req.Send(ctx).End()
+				if err != nil || text != "ok" {
+					t.Fatalf("response=%v text=%q err=%v", resp, text, err)
+				}
+				wantProto := 2
+				if h1 {
+					wantProto = 1
+				}
+				if resp.ProtoMajor != wantProto || nativeResp.ProtoMajor != wantProto {
+					t.Fatalf("wrapped=%s native=%s", resp.Proto, nativeResp.Proto)
+				}
+				mu.Lock()
+				slices.Sort(nativeFields)
+				slices.Sort(wrappedFields)
+				if len(nativeFields) == 0 || !reflect.DeepEqual(nativeFields, wrappedFields) {
+					t.Errorf("wrapped headers=%v native=%v", wrappedFields, nativeFields)
+				}
+				if !h1 {
+					for _, field := range wrappedFields {
+						name, _, _ := strings.Cut(field, ": ")
+						if name != strings.ToLower(name) {
+							t.Errorf("HTTP/2 field is not lowercase: %s", field)
+						}
+					}
+				}
+				mu.Unlock()
+				if h1 {
+					hops := 1
+					if tc.redirect {
+						hops = 2
+					}
+					blocks := make([][]string, hops*2)
+					for i := range blocks {
+						select {
+						case block := <-wire:
+							blocks[i] = strings.Split(block, "\r\n")
+							slices.Sort(blocks[i][1:])
+						case <-time.After(5 * time.Second):
+							t.Fatal("missing raw HTTP/1.1 request headers")
+						}
+					}
+					if !reflect.DeepEqual(blocks[:hops], blocks[hops:]) {
+						t.Fatalf("raw HTTP/1.1 headers differ: native=%v wrapped=%v", blocks[:hops], blocks[hops:])
+					}
+				}
+				output := logs.String()
+				if strings.Contains(output, "header-secret") || strings.Contains(output, "body-secret") ||
+					!strings.Contains(output, `"x-token":["[REDACTED]"]`) || !strings.Contains(output, "Header-Source: transport") {
+					t.Fatal(output)
+				}
+			})
+		}
+	}
+}
+
+type headerCaptureListener struct {
+	net.Listener
+	headers chan<- string
+}
+
+func (l *headerCaptureListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &headerCaptureConn{Conn: conn, headers: l.headers}, nil
+}
+
+type headerCaptureConn struct {
+	net.Conn
+	headers chan<- string
+	pending []byte
+	done    bool
+}
+
+func (c *headerCaptureConn) Read(p []byte) (int, error) {
+	n, err := c.Conn.Read(p)
+	if !c.done {
+		c.pending = append(c.pending, p[:n]...)
+		if end := bytes.Index(c.pending, []byte("\r\n\r\n")); end >= 0 {
+			c.headers <- string(c.pending[:end])
+			c.pending, c.done = nil, true
+		}
+	}
+	return n, err
 }
 
 func TestStreamingAndCancellation(t *testing.T) {

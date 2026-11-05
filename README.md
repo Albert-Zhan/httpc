@@ -77,6 +77,8 @@ fmt.Println(resp.StatusCode, text)
 | `SetParam(name, value)` | 合并 URL 查询参数，同名参数追加多个值 |
 | `SetHeader(name, value)` | 替换同名头的全部值，名称不区分大小写 |
 | `AddHeader(name, value)` | 追加同名头的一个值 |
+| `SetHeaderRaw(name, value)` | 保留名称写法，替换该精确键的全部值，建议用于 tls-client 后端 |
+| `AddHeaderRaw(name, value)` | 保留名称写法，向该精确键追加值，建议用于 tls-client 后端 |
 | `SetBasicAuth(user, password)` | 设置 Basic Auth，与手动 Authorization 以后一次设置为准 |
 | `SetBody(data)` | 设置正文，自动采用其 Content-Type；手动设置的 Content-Type 优先 |
 
@@ -85,6 +87,21 @@ fmt.Println(resp.StatusCode, text)
 `SetHost("api.example.com:8443")` 只改变请求声明的主机，不改变 URL 的连接目标或 TLS SNI。它接受主机名或主机名:端口；格式无效时 Send 返回 ErrInvalidRequest。`SetHeader("Host", ...)` 不能替代它。SetHost 与 SetURL 的调用顺序无关；清除覆盖可调用 `SetHost("")`。
 
 Go 1.27 标准后端的自动 Cookie 按覆盖后的 Host 匹配。tls-client 适配器沿用当前 fhttp v0.7.3 的原生行为，自动 Cookie 仍按 URL 主机匹配。
+
+需要在 HTTP/1.1 中保留请求头名称的大小写时，可使用 Raw 方法：
+
+```go
+req := httpc.NewRequest(client).
+	SetURL("https://example.com").
+	SetHeaderRaw("user-agent", "my-client/1.0").
+	SetHeaderRaw("x-device-id", "abc").
+	AddHeaderRaw("x-device-id", "def")
+resp, text, err := req.Send().End()
+```
+
+Raw 方法建议配合 [tls-client 后端](adapters/tlsclient/README.md) 使用，头映射的设置方式与直接操作 `fhttp.Header` 相同。名称按精确键匹配，`x-token` 和 `X-Token` 可以同时存在；与普通 SetHeader、AddHeader 混用时也不会自动合并。httpc 识别任意大小写的显式 User-Agent、Content-Type，含空值，避免再补充默认头。
+
+Raw 方法不控制排列顺序，也不改变发送协议。HTTP/2 仍按协议使用小写名称。名称、值、Cookie、压缩、重定向及特殊头的处理遵循发送后端；标准库后端的行为可能不同，尤其是 User-Agent、Host 和传输长度等字段。Host 值通常使用 SetHost。后端专用控制键应仅用于支持它的后端。
 
 ## 请求体与上传
 
