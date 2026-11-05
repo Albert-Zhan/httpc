@@ -1,13 +1,10 @@
-# tls-client 适配器
+# tls-client 后端
 
-独立模块：`github.com/Albert-Zhan/httpc/adapters/tlsclient/v2`。核心库仅使用标准库；安装此模块才引入 bogdanfinn/tls-client v1.18.0、fhttp 和 uTLS。
+模块路径：`github.com/Albert-Zhan/httpc/adapters/tlsclient/v2`。适配器将标准库请求转换为 fhttp 请求，由传入的 tls-client 执行发送。只有使用此模块时才引入 tls-client、fhttp 和 uTLS，依赖版本见 [go.mod](go.mod)。
 
-当前为 `dev/v2` 开发版本。尚未发布核心 v2，先按根目录 [开发说明](../../CONTRIBUTING.md) 建立 workspace。正式发布后分别安装核心和适配模块：
+v2 的安装状态见[主文档](../../README.md)，本地双模块 workspace 的准备方法见[开发说明](../../CONTRIBUTING.md#本地检查)。
 
-```sh
-go get github.com/Albert-Zhan/httpc/v2@v2.0.0
-go get github.com/Albert-Zhan/httpc/adapters/tlsclient/v2@v2.0.0
-```
+## 接入
 
 ```go
 package main
@@ -32,75 +29,77 @@ func main() {
     )
     if err != nil { fmt.Println(err); return }
     defer raw.Close()
+
     client, err := tlsclient.New(raw)
     if err != nil { fmt.Println(err); return }
     ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
     defer cancel()
-    resp, text, err := httpc.NewRequest(client).
-        SetURL("https://example.com").SetDebug(true).Send(ctx).End()
+    resp, text, err := httpc.NewRequest(client).SetURL("https://example.com").Send(ctx).End()
     if err != nil { fmt.Println(err); return }
     fmt.Println(resp.StatusCode, text)
 }
 ```
 
-配置归属：
-
-| 能力 | 配置入口 |
+| 配置 | 入口 |
 | --- | --- |
-| TLS profile、HTTP 协议、证书、代理、Cookie、重定向、总超时 | 在 raw 上通过 tls-client 的选项或方法配置 |
-| 请求方法、头、正文、响应读取和限额 | httpc.NewRequest(client) |
-| 日志 Writer、字段脱敏、发送日志 | client.SetDebugOutput、AddDebugSensitiveFields、Request.SetDebug |
-| 取消、任务超时、标准 Trace | Request.Send(ctx) 或 client.Do(req) 的 context |
-| 空闲连接释放 | client.CloseIdleConnections 转发至 raw；raw.Close 由调用方管理 |
+| TLS profile、协议、证书、代理、Jar、重定向、总超时 | raw 的选项或方法 |
+| 方法、URL、头、正文、响应读取与大小限制 | httpc.Request |
+| 默认 UA 策略 | tlsclient.New 的可选项 |
+| 日志与脱敏 | httpc.Client；用 Request.SetDebug 或 httpc.WithDebug(ctx) 开启 |
+| 取消、任务期限、Trace | Send(ctx) 或 Client.Do(req) 的 context |
 
-httpc 的标准后端配置方法不适用于此包装客户端，误用会返回可匹配的 `httpc.ErrUnsupportedBackend` 并阻止发送。不会叠加第二套 http.Client 的 Cookie、重定向或超时策略。
+httpc 的标准后端配置方法不适用于此包装客户端，误用返回 `httpc.ErrUnsupportedBackend` 并阻止发送；应在 raw 配置后重新创建包装客户端。`client.CloseIdleConnections()` 转发至 raw，最终 `raw.Close()` 由调用方负责。
 
-默认缺少 UA 时补充 `httpc.DefaultUserAgent`。如需由 raw 处理默认 UA，创建包装客户端时开启后端 UA 模式：
+## 默认 UA 与默认头
+
+`tlsclient.New(raw)` 默认在缺少 UA 时补充 `httpc.DefaultUserAgent`。需要由 raw 处理默认 UA 时，使用：
 
 ```go
 client, err := tlsclient.New(raw, tlsclient.WithBackendUserAgent())
 ```
 
-该模式同时适用于 `Request.Send()` 和 `Client.Do()`。显式设置的 UA，包括空值及与版本 UA 相同的值，均保持原样。请求头完全为空时，raw 可使用 WithDefaultHeaders；未配置后端默认头时，UA 遵循 tls-client 原生默认行为。此选项不会逐字段合并默认头：正文的 Content-Type、Cookie、自定义头或排序控制键等已经使 Header 非空时，WithDefaultHeaders 不会生效。空头请求若需版本 UA 与整套后端默认头共同生效，可将 `httpc.DefaultUserAgent` 放入 raw 的 WithDefaultHeaders 配置。
+两种模式都适用于 Request.Send 和 Client.Do，并保留显式 UA，包括空值和与版本 UA 相同的值。
 
-请求 Body、GetBody、长度、Host 和多值头会保留；正文不被预读取，响应 Body 仍为流。响应 Trailer 在正文读取结束后同步。标准 httptrace 与已有 fhttp Trace 会组合；只转发上游实际发出的事件，专用拨号器可能缺少 DNS 或 TLS 握手事件。GotConn 中的连接仍是上游连接类型，不能断言为标准库的 `*tls.Conn`。
+后端 UA 模式不会逐字段合并默认头。tls-client 的 WithDefaultHeaders 仅在请求头完全为空时生效；Content-Type、Cookie、自定义头及排序控制键都会让 Header 非空。未配置后端默认头时，UA 遵循 tls-client 原生行为。空头请求若需版本 UA 与整套默认头共同生效，可将 `httpc.DefaultUserAgent` 放入 raw 的 WithDefaultHeaders。
 
-需要保留头名称写法时，使用 `SetHeaderRaw`、`AddHeaderRaw`，例如：
+## 请求头
+
+普通 SetHeader、AddHeader 会规范化名称。需要 HTTP/1.1 名称大小写或发送顺序控制时，使用：
 
 ```go
-req := httpc.NewRequest(client).
-    SetURL("https://example.com").
+req := httpc.NewRequest(client).SetURL("https://example.com").
     SetHeaderRaw("user-agent", "my-client/1.0").
-    SetHeaderRaw("content-type", "application/json").
-    SetHeaderRaw("x-device-id", "abc").
-    AddHeaderRaw("x-device-id", "def")
-```
-
-两个方法分别等价于为 `fhttp.Header` 的精确 map 键赋值和追加值；`x-token` 与 `X-Token` 不会合并。适配器保留名称和值，由上游处理特殊头、Cookie、压缩和重定向。默认模式下，httpc 未发现任何大小写形式的 User-Agent 时补充版本 UA；后端 UA 模式跳过这一步。构建器有正文且未显式设置 Content-Type 时采用正文类型，显式空值也会保留。HTTP/1.1 的普通头保留写法，HTTP/2 名称仍为小写。
-
-普通头排序建议使用 `SetHeaderOrder`，HTTP/2 伪头排序使用 `SetPseudoHeaderOrder`：
-
-```go
-req.SetHeaderOrder("user-agent", "accept", "content-type", "x-device-id").
+    SetHeaderRaw("x-device-id", "abc").AddHeaderRaw("x-device-id", "def").
+    SetHeaderOrder("user-agent", "x-device-id").
     SetPseudoHeaderOrder(":method", ":authority", ":scheme", ":path")
 ```
 
-普通头的排序名称转为小写，不改变 Raw 头的名称写法；未列出的头不会被删除，自动生成字段的顺序遵循上游实现。伪头列表须为 `:method`、`:authority`、`:scheme`、`:path` 的完整排列，各一次；只调整它们之间的顺序，HTTP/1.1 不使用伪头配置。两个方法复制传入切片，后一次调用替换前一次，不传参数清除对应配置。错误的名称、重复项或不完整的伪头列表在 Send 时返回 `httpc.ErrInvalidRequest`。
+| 方法 | 规则 |
+| --- | --- |
+| SetHeaderRaw / AddHeaderRaw | 按精确 map 键替换全部值 / 追加值，等价于操作 fhttp.Header；`x-token` 与 `X-Token` 不合并 |
+| SetHeaderOrder | 排序名称转为小写，不改变 Raw 头的名称写法；未列出的头保留，由后端安排 |
+| SetPseudoHeaderOrder | 须为 `:method`、`:authority`、`:scheme`、`:path` 的完整排列，各一次；伪头始终在普通头前，HTTP/1.1 忽略此配置 |
 
-内置标准库后端不支持这两个排序方法，配置后 Send 返回 `httpc.ErrUnsupportedBackend`。调试日志 Header 的 JSON 键排列不代表线上顺序；可通过 context 中的 httptrace.WroteHeaderField 观察发送事件。
+排序方法复制输入切片，重复调用替换配置，不传参数清除配置。非法名称、重复项或不完整的伪头列表在 Send 返回 `httpc.ErrInvalidRequest`。内置标准后端不支持排序，返回 `httpc.ErrUnsupportedBackend`。
 
-Raw 方法仍可传入 `fhttp.HeaderOrderKey`、`fhttp.PHeaderOrderKey` 等上游控制键，多个值使用 AddHeaderRaw 追加；Raw 透传沿用上游规则，专用排序方法会校验对应配置。标准库后端不识别这些控制键，对 User-Agent、Host、传输长度等特殊头的处理也可能不同。
+HTTP/2 名称仍为小写。特殊头和自动生成字段的最终写法、顺序遵循 fhttp；Raw 方法也可传入 HeaderOrderKey、PHeaderOrderKey 等上游控制键。Host 值通常使用 SetHost，不以普通 Host 头代替；自动 Cookie 按 URL 主机匹配，与标准后端的 Host 匹配规则不同。
 
-响应 TLS 公共字段会映射；转换后的 `tls.ConnectionState` 不具备上游内部导出密钥状态，请勿对其调用 ExportKeyingMaterial。响应 Request 包含上游最终请求的 URL 和头，并保留 raw 返回的来源响应链：`resp.Request.Response` 是最近一跳重定向响应，再沿 Request.Response 向前查看更早的记录，无来源时为 nil。转换只复制元信息，历史 Body 保持原有关闭状态，不读取、重开或缓存正文。
+## 响应与追踪
 
-调试的一次外部 Do 中，内部重定向显示为 Trace 尝试，快照 URL 为初始 URL。
+正文、GetBody、长度、Host、多值头和 Trailer 保留，适配器不预读正文；响应 Trailer 在正文结束时同步。客户端传输选项和 End 方法对 gzip 的处理见[响应读取](../../README.md#读取响应)。
 
-首版验证范围是 HTTP/1.1、HTTP/2，示例禁用 HTTP/3。不要为流式下载开启上游 `tls_client.WithDebug()`，它会将完整正文读入内存；使用 httpc 的有界日志。
+`resp.Request` 包含最终请求的 URL、头和 context；`resp.Request.Response` 指向最近一跳来源响应，可继续沿 Request.Response 向前查看，无来源时为 nil。历史 Body 保持 raw 已有的状态，不重新读取或缓存。
 
-下载示例位于 [examples/download/main.go](examples/download/main.go)。从仓库根目录配置 workspace 后运行：
+标准 httptrace 与已有 fhttp Trace 回调会组合，只转发上游发出的事件。GotConn.Conn 是上游连接类型，不能断言为标准库的 `*tls.Conn`。Response.TLS 映射共有公开字段，不包含 uTLS 的内部导出密钥状态，不能用于 ExportKeyingMaterial。
+
+日志采集范围、内部重定向的显示方式和 JSON 头字段顺序见[调试日志](../../README.md#调试日志)。不要为流式请求开启 `tls_client.WithDebug()`，它会读取完整正文；使用 httpc 的有界预览。适配器的验证范围是 HTTP/1.1、HTTP/2，示例禁用 HTTP/3。
+
+## 下载
+
+下载器可直接使用包装后的客户端，配置见[下载器说明](../../downloader/README.md)。完整示例为 [examples/download/main.go](examples/download/main.go)，建立 workspace 后可在仓库根目录运行：
 
 ```sh
 go run ./adapters/tlsclient/examples/download -url https://example.com/archive.zip -out archive.zip -workers 4
 ```
 
-此模块发布标签带子目录前缀，例如 `adapters/tlsclient/v2.0.0`；go get 中的版本仍为 `v2.0.0`。须先发布 go.mod 指定的核心版本，再发布适配模块。
+模块发布及标签规则见[开发与发布](../../CONTRIBUTING.md#发布流程)。

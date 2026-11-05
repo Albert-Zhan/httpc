@@ -17,11 +17,11 @@ v2 使用 `github.com/Albert-Zhan/httpc/v2` 模块路径，并移除 v1 已弃�
 
 | 已移除 | v2 替代方式 |
 | --- | --- |
-| `httpc.HttpClient` | `httpc.Client`，现在为正式类型 |
+| `httpc.HttpClient` | `httpc.Client` |
 | `httpc.NewHttpClient()` | `httpc.NewClient()` |
 | `Request.SetUrl(url)` | `Request.SetURL(url)` |
 | `Request.SetCookies(&cookies)` | `Request.SetCookieList(cookies)` |
-| `body.Url` | `body.URL`，现在为正式类型 |
+| `body.Url` | `body.URL` |
 | `body.NewUrlEncode()` | `body.NewURLEncode()` |
 | `body.Json`、`body.Html`、`body.Xml` | `body.JSON`、`body.HTML`、`body.XML` |
 | `Request.EndFile(dir, name)` | 用 `downloader.New` 创建下载器，再调用其 `Download`；已有响应使用 `EndTo(writer)` |
@@ -31,7 +31,7 @@ v2 使用 `github.com/Albert-Zhan/httpc/v2` 模块路径，并移除 v1 已弃�
 
 `SetCookieList` 复制切片、共享 Cookie 对象。调用后对原切片变量重新赋值或追加，不会改变请求中的列表；如需更新，再调用一次 SetCookieList。nil 或空切片清空列表，nil Cookie 元素在发送时返回 ErrInvalidRequest。
 
-`body.URL` 的内部数据由 `*url.Values` 简化为 `url.Values`，零值仍可使用。它不再是可比较类型，不能直接使用 `==` 或作为 map 的键。独立表单应分别创建，不要复制可变表单；使用 NewURLEncode 和 SetData 的普通调用方式不变。
+`body.URL` 的零值仍可使用，但不再可比较，不能使用 `==` 或作为 map 的键。独立表单应分别创建，不要复制可变表单；使用 NewURLEncode 和 SetData 的普通调用方式不变。
 
 ## 用下载器替代 EndFile
 
@@ -52,7 +52,7 @@ if err != nil { fmt.Println(err); return }
 fmt.Println(result.Path, result.Size)
 ```
 
-Workers 为 1 时直接单线程流式下载。设置为 0 或更大的并发数时，会按服务器的 Range、强 ETag 和文件长度决定是否并行；具体选项见 [README 下载器说明](README.md#下载器)。
+Workers 为 1 时直接单线程流式下载。设置为 0 或更大的并发数时，会按服务器的 Range、强 ETag 和文件长度决定是否并行；具体选项见 [下载器说明](downloader/README.md#配置)。
 
 迁移时注意这些行为差异：
 
@@ -80,4 +80,4 @@ fmt.Println(resp.StatusCode)
 
 EndTo 关闭响应体，文件由调用方关闭；上例使用 os.Create，因此会覆盖已有文件。它会写入响应正文，包括 4xx/5xx 正文，业务代码须处理状态码。写入失败或超限可能保留部分文件；EndTo 不提供下载器的临时文件提交和失败清理功能。
 
-当前开发版本仍为 `2.0.0-dev`，上述变更将随 v2 发布；正式发布流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+版本与发布规则见 [CONTRIBUTING.md](CONTRIBUTING.md)。

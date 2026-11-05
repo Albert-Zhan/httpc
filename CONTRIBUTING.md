@@ -8,7 +8,7 @@
 | `release/v1` | v1 的兼容修复 | 仅核心稳定 v1.x |
 | `dev/v2` | v2 开发、下载器和后端适配 | 仅 v2 alpha、beta、rc 预发布 |
 
-`master` 当前保留稳定 v1.6.0。v2 功能先在 `dev/v2` 开发，不直接改动 v1 模块路径。无需新仓库或根目录下再建 v2 文件夹。
+v2 功能在 `dev/v2` 开发，稳定 v1 的修复在 `release/v1` 维护。
 
 | 模块 | go.mod 路径 | 模块路径 | 标签示例 |
 | --- | --- | --- | --- |
@@ -30,7 +30,7 @@ go test -race -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out 
 
 只验证核心模块时可设置 `GOWORK=off`，不需要下载 TLS 依赖。根目录 `go test ./...` 不会自动测试嵌套模块，适配器必须单独执行。可运行的下载示例位于 `downloader/example_test.go` 和 `adapters/tlsclient/examples/download/main.go`。
 
-竞态检查需要启用 CGO 并安装 C 编译器。GitHub 托管 runner 已提供相应环境。文本文件通过 `.gitattributes` 统一使用 LF 换行；CI 在检出历史提交时也关闭自动 CRLF 转换。
+竞态检查需要启用 CGO 并安装 C 编译器。GitHub 托管 runner 已提供相应环境。文本文件通过 `.gitattributes` 统一使用 LF 换行，CI 关闭自动 CRLF 转换。
 
 修复缺陷时添加能复现问题的回归测试；新增公共 API 时覆盖正常行为和关键错误路径。测试优先使用 `httptest`、本地临时文件或自定义 Transport，避免依赖公网服务、真实凭据和固定等待时间。
 
@@ -79,7 +79,7 @@ python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 
 ## 发布流程
 
-发布通过 `.github/workflows/release.yml` 完成，不在普通功能提交时创建版本。`dev/v2` 当前的 `.github/release.json` 设置 `enabled: false`，继承的 v1 配置不会意外发布为 v2。
+发布通过 `.github/workflows/release.yml` 完成，不在普通功能提交时创建版本。`dev/v2` 的发布配置默认关闭（`enabled: false`），发布前须显式更新 `.github/release.json`。
 
 1. 将对应模块的 `version.go` 的 Version 更新为目标版本，不带 v 前缀。正式版本使用 `2.0.0`，预发布使用 `2.0.0-beta.1` 或 `2.0.0-rc.1`，`-dev` 不能发布。同步文档与依赖并提交，记录完整 SHA。
 2. 在允许发布的分支修改 `.github/release.json`，填写 `enabled: true`、`module_dir`、`tag_name`、`target_commitish`、`name`、`body`。`module_dir` 只允许 `.` 或 `adapters/tlsclient`；标签格式见模块表。
@@ -106,8 +106,4 @@ python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 
 v2 正式发布时先把 `dev/v2` 合入 `master`，将核心 Version 改为 2.0.0，通过 CI 后发布 `v2.0.0`；随后发布适配模块的 `adapters/tlsclient/v2.0.0`。v1 后续修复只在 `release/v1` 发布新补丁标签，旧标签不变。GitHub 默认分支继续使用 master。
 
-检查任务仅有读取权限；最后的发布任务才拥有仓库内容写入权限。发布脚本、版本和分支策略的测试命令：
-
-```sh
-python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
-```
+检查任务仅有读取权限，发布任务拥有仓库内容写入权限。版本与分支策略由上述 Python 测试覆盖。

@@ -66,11 +66,9 @@ func (r *Request) SetURL(rawURL string) *Request {
 	return r
 }
 
-// SetHost 覆盖 HTTP/1.1 Host 或 HTTP/2 :authority，空字符串恢复使用 URL 主机。
-// host 为主机名或主机名:端口，不含协议、路径、查询或用户信息。
-// 不改变 URL、连接地址或 TLS SNI；CookieJar 的匹配规则由发送后端决定。
-// 应在 Send 前调用。
-// 格式无效时，Send 返回 ErrInvalidRequest。
+// SetHost 设置 HTTP/1.1 Host 或 HTTP/2 :authority，空字符串使用 URL 主机。
+// host 接受主机名或主机名:端口，不改变连接目标或 TLS SNI；自动 Cookie 遵循后端规则。
+// 应在 Send 前设置，格式无效时 Send 返回 ErrInvalidRequest。
 func (r *Request) SetHost(host string) *Request {
 	r.host = host
 	return r
@@ -85,23 +83,22 @@ func (r *Request) SetParam(name, value string) *Request {
 	return r
 }
 
-// SetHeader 设置请求头，覆盖同名头的全部旧值；名称不区分大小写。
+// SetHeader 规范化请求头名称，替换该键的全部值。
 // User-Agent 显式设置为空时禁止发送该头。
 func (r *Request) SetHeader(name, value string) *Request {
 	r.header.Set(name, value)
 	return r
 }
 
-// AddHeader 追加请求头的一个值，保留同名头的已有值；名称不区分大小写。
+// AddHeader 规范化请求头名称，向该键追加一个值。
 func (r *Request) AddHeader(name, value string) *Request {
 	r.header.Add(name, value)
 	return r
 }
 
-// SetHeaderRaw 保留 name 的大小写，替换该精确键的全部值，不合并其他大小写的键。
-// 建议用于 tls-client 后端，等价于直接给 fhttp.Header 的 map 键赋值。
-// 标准库后端对 User-Agent、Cookie、压缩等特殊头的处理可能不同；HTTP/2 名称仍为小写。
-// 名称、值及后端控制键由发送后端校验和处理；此方法不控制请求头顺序。
+// SetHeaderRaw 保留名称写法，替换精确键的全部值，不合并其他大小写的键。
+// 建议用于 tls-client；名称、值和特殊头由后端处理，标准后端行为可能不同。
+// HTTP/2 名称仍为小写；排序使用 SetHeaderOrder 和 SetPseudoHeaderOrder。
 func (r *Request) SetHeaderRaw(name, value string) *Request {
 	if r.header == nil {
 		r.header = make(http.Header)
@@ -110,10 +107,8 @@ func (r *Request) SetHeaderRaw(name, value string) *Request {
 	return r
 }
 
-// AddHeaderRaw 保留 name 的大小写，向该精确键追加值，不合并其他大小写的键。
-// 建议用于 tls-client 后端，等价于向 fhttp.Header 的 map 键追加值。
-// 标准库后端对特殊头的处理可能不同；HTTP/2 名称仍为小写。
-// 名称、值及后端控制键由发送后端校验和处理；此方法不控制请求头顺序。
+// AddHeaderRaw 保留名称写法，向精确键追加值。
+// 大小写、协议和后端规则同 [Request.SetHeaderRaw]。
 func (r *Request) AddHeaderRaw(name, value string) *Request {
 	if r.header == nil {
 		r.header = make(http.Header)
@@ -129,17 +124,15 @@ func (r *Request) SetBasicAuth(username, password string) *Request {
 	return r.SetHeader("Authorization", value)
 }
 
-// SetCookieList 替换 Cookie 列表，复制切片但共享 Cookie 对象。
-// nil 或空列表可清除列表，后一次调用替换此前列表。
-// 列表含 nil 元素时，Send 返回 ErrInvalidRequest。
-// 发送期间不要修改 Cookie 对象。
+// SetCookieList 替换请求 Cookie，复制切片但共享对象；发送期间不要修改 Cookie 对象。
+// nil 或空列表清空配置，nil 元素在 Send 时返回 ErrInvalidRequest。
 func (r *Request) SetCookieList(cookies []*http.Cookie) *Request {
 	r.cookies = slices.Clone(cookies)
 	return r
 }
 
-// SetDebug 设置是否输出发送阶段请求日志，默认关闭；开启后默认不脱敏。
-// 通过 Client.SetDebugOutput 和 Client.AddDebugSensitiveFields 配置输出和脱敏。
+// SetDebug 开启或关闭发送日志，默认关闭，开启后默认不脱敏。
+// 输出与过滤规则通过 [Client.SetDebugOutput] 和 [Client.AddDebugSensitiveFields] 配置。
 func (r *Request) SetDebug(d bool) *Request {
 	r.debug = d
 	return r
@@ -151,18 +144,16 @@ func (r *Request) SetBody(body body.Body) *Request {
 	return r
 }
 
-// SetResponseLimit 设置读取响应正文的最大字节数，按 gzip 解压后的大小计数。
-// 默认不限制，0 或负值取消限制；应在读取响应前设置。
-// 超出限制返回 ErrResponseTooLarge，Writer 或文件中可能保留已写入的部分内容。
+// SetResponseLimit 限制 End 方法读取的解码后字节数，0 或负值表示不限制。
+// 应在读取前设置；超过时返回 ErrResponseTooLarge，输出目标可能留有部分内容。
 func (r *Request) SetResponseLimit(n int64) *Request {
 	r.responseLimit = n
 	return r
 }
 
-// Send 构建并发送请求，可选传入 context 控制取消和超时。
-// 省略 context 时使用 context.Background()。
-// 未显式设置 User-Agent 时默认使用 DefaultUserAgent；后端 UA 模式交给后端处理。
-// 每个 Request 只能调用一次 Send；重复调用返回 ErrInvalidRequest 并关闭未读取的响应体。
+// Send 构建并发送请求，省略 context 时使用 context.Background()。
+// 缺少 UA 时默认补充 DefaultUserAgent，后端 UA 模式由后端处理。
+// 每个 Request 只能发送一次，重复发送返回 ErrInvalidRequest 并关闭未读取的响应体。
 func (r *Request) Send(ctxs ...context.Context) *Request {
 	if r.sendCalled {
 		if !r.responseRead && r.response != nil && r.response.Body != nil {
@@ -271,7 +262,7 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 	return r
 }
 
-// headerValuesFold 只用于读取；保留头映射中的原始键名及显式空值。
+// headerValuesFold 查找同名头，保留原始键名和显式空值。
 func headerValuesFold(headers http.Header, name string) (values []string, present bool) {
 	for key, items := range headers {
 		if strings.EqualFold(key, name) {
@@ -282,7 +273,7 @@ func headerValuesFold(headers http.Header, name string) (values []string, presen
 	return values, present
 }
 
-// Host 是 authority，不接受完整 URL 或可分隔请求头的字符。
+// Host 仅接受 authority，不接受完整 URL 或请求头分隔字符。
 func validateRequestHost(host string) error {
 	if strings.HasSuffix(host, ":") || strings.ContainsAny(host, "/\\?#@") || strings.IndexFunc(host, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
 		return fmt.Errorf("host must be a hostname or hostname:port")

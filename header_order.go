@@ -12,21 +12,19 @@ const (
 	pseudoHeaderOrderKey = "PHeader-Order:"
 )
 
-// SetHeaderOrder 设置普通请求头的顺序，名称转为小写，不改变 Raw 头的名称写法。
-// 建议用于 tls-client 的 HTTP/1.1、HTTP/2；其他外部后端须支持 fhttp 排序控制键。
-// 复制 names；重复调用替换配置，不传参数清除配置，未列出的头仍由后端处理。
-// 内置标准库后端在 Send 时返回 ErrUnsupportedBackend；空名称、非法名称或重复项返回 ErrInvalidRequest。
+// SetHeaderOrder 设置普通头顺序，排序名称转小写，Raw 头写法不变。
+// 需要支持 fhttp 排序控制键的外部后端，建议使用 tls-client；标准后端返回 ErrUnsupportedBackend。
+// 复制 names，重复调用替换配置，空参数清除配置，未列出的头仍保留。
+// 名称非法或重复时，Send 返回 ErrInvalidRequest。
 func (r *Request) SetHeaderOrder(names ...string) *Request {
 	r.headerOrderSet = len(names) > 0
 	r.setHeaderOrder(headerOrderKey, names, true)
 	return r
 }
 
-// SetPseudoHeaderOrder 设置 HTTP/2 伪头之间的顺序，伪头始终在普通头之前。
-// names 须是 :method、:authority、:scheme、:path 的完整排列，各出现一次。
-// 建议用于 tls-client 后端；HTTP/1.1 不使用伪头配置。
-// 复制 names；重复调用替换配置，不传参数清除配置。
-// 内置标准库后端在 Send 时返回 ErrUnsupportedBackend；列表无效时返回 ErrInvalidRequest。
+// SetPseudoHeaderOrder 设置 HTTP/2 伪头顺序，须包含 :method、:authority、:scheme、:path 各一次。
+// 伪头仍在普通头前，HTTP/1.1 忽略此配置；后端和替换规则同 [Request.SetHeaderOrder]。
+// 标准后端返回 ErrUnsupportedBackend，列表无效时 Send 返回 ErrInvalidRequest。
 func (r *Request) SetPseudoHeaderOrder(names ...string) *Request {
 	r.pseudoHeaderOrderSet = len(names) > 0
 	r.setHeaderOrder(pseudoHeaderOrderKey, names, false)

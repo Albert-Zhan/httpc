@@ -17,17 +17,16 @@ import (
 	utls "github.com/bogdanfinn/utls"
 )
 
-// Option 配置 httpc 的外部后端发送策略，不修改 raw 的连接或会话配置。
+// Option 配置 httpc 的发送策略。
 type Option = httpc.DoerOption
 
-// WithBackendUserAgent 将默认 UA 交给 raw，不再补充 httpc 的版本 UA。
-// 请求头完全为空时，raw 可采用其 WithDefaultHeaders；非空时沿用原生规则，不逐字段合并。
-// 显式 UA（包括空值）保留；raw 没有默认头时使用其原生 UA 默认行为。
+// WithBackendUserAgent 将默认 UA 交给 raw，保留显式 UA（含空值）。
+// raw 仅在请求头完全为空时采用 WithDefaultHeaders，此选项不逐字段合并默认头。
 func WithBackendUserAgent() Option { return httpc.WithBackendUserAgent() }
 
-// New 包装已配置的 tls-client。代理、TLS、Jar、重定向和超时由 raw 管理。
-// 默认缺少 UA 时补充 httpc.DefaultUserAgent，可用 WithBackendUserAgent 交给 raw。
-// 下载大文件时不要开启上游 WithDebug，其实现会读取完整正文。
+// New 使用 raw 创建 httpc 客户端，连接、Cookie、重定向和超时由 raw 管理。
+// 缺少 UA 时默认补充 httpc.DefaultUserAgent，可用 WithBackendUserAgent 交给 raw。
+// 流式传输应使用 httpc 日志，上游 WithDebug 会读取完整正文。
 func New(raw tls_client.HttpClient, options ...Option) (*httpc.Client, error) {
 	if raw == nil || (reflect.ValueOf(raw).Kind() == reflect.Pointer && reflect.ValueOf(raw).IsNil()) {
 		return nil, fmt.Errorf("%w: tls-client is nil", httpc.ErrInvalidRequest)
@@ -107,7 +106,7 @@ func toRequest(req *http.Request) (*fhttp.Request, error) {
 
 func toResponse(resp *fhttp.Response) *http.Response {
 	var converter responseConverter
-	// 普通响应不分配缓存；有来源链时保留共享对象，并防止循环引用导致无限递归。
+	// 仅在存在来源链时缓存转换结果，以保留共享对象并处理循环引用。
 	if resp != nil && resp.Request != nil && resp.Request.Response != nil {
 		converter.responses = make(map[*fhttp.Response]*http.Response)
 		converter.requests = make(map[*fhttp.Request]*http.Request)

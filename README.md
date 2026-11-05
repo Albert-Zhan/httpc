@@ -1,328 +1,148 @@
 # httpc v2
 
-[![CI](https://github.com/Albert-Zhan/httpc/actions/workflows/ci.yml/badge.svg)](https://github.com/Albert-Zhan/httpc/actions/workflows/ci.yml)
+[![CI](https://github.com/Albert-Zhan/httpc/actions/workflows/ci.yml/badge.svg?branch=dev%2Fv2)](https://github.com/Albert-Zhan/httpc/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/Albert-Zhan/httpc/v2.svg)](https://pkg.go.dev/github.com/Albert-Zhan/httpc/v2)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-httpc 是轻量的链式 HTTP 客户端，支持请求构建、正文传输、Cookie、Transport 扩展、发送阶段调试和流式下载。核心模块仅依赖 Go 标准库；tls-client 通过独立的可选模块接入。
+httpc 是轻量的链式 HTTP 客户端，支持请求构建、流式输出、Cookie、Transport 扩展和请求调试。核心仅依赖 Go 标准库；[下载器](downloader/README.md) 位于核心子包，[tls-client 后端](adapters/tlsclient/README.md) 通过独立模块接入。
 
-需要 **Go 1.27 或更新版本**。当前是 `dev/v2` 开发分支，版本为 `2.0.0-dev`，尚未发布 v2 正式版。稳定 v1.6.0 仍在 [master](https://github.com/Albert-Zhan/httpc/tree/master)，v1 后续维护使用 `release/v1`。
-
-v2 的导入路径为 `github.com/Albert-Zhan/httpc/v2`；本地运行和双模块 workspace 的准备方法见 [开发规范](CONTRIBUTING.md)。正式发布后安装命令为：
+需要 **Go 1.27+**，导入路径为 `github.com/Albert-Zhan/httpc/v2`。当前 `dev/v2` 为开发版本，尚未发布 v2 正式版，本地使用方法见 [开发说明](CONTRIBUTING.md#本地检查)。正式发布后可安装对应版本：
 
 ```sh
 go get github.com/Albert-Zhan/httpc/v2@v2.0.0
 ```
 
-[API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc/v2) · [发布版本](https://github.com/Albert-Zhan/httpc/releases) · [开发与发布规范](CONTRIBUTING.md) · [v1 → v2 迁移](MIGRATING.md)
+[API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc/v2) · [版本发布](https://github.com/Albert-Zhan/httpc/releases) · [从 v1 迁移](MIGRATING.md) · [开发与发布](CONTRIBUTING.md)
 
 ## 快速开始
 
-下面的示例可直接运行，使用本地 HTTP 服务：
+这个示例使用本地 HTTP 服务，可直接运行：
 
 ```go
 package main
 
 import (
-	"fmt"
-	"net/http"
-	"net/http/httptest"
+    "fmt"
+    "net/http"
+    "net/http/httptest"
 
-	"github.com/Albert-Zhan/httpc/v2"
+    "github.com/Albert-Zhan/httpc/v2"
 )
 
 func main() {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, "hello httpc")
-	}))
-	defer server.Close()
+    server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprint(w, "hello httpc")
+    }))
+    defer server.Close()
 
-	client := httpc.NewClient()
-	defer client.CloseIdleConnections()
-
-	resp, text, err := httpc.NewRequest(client).SetURL(server.URL).Send().End()
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-	fmt.Println(resp.StatusCode) // 200
-	fmt.Println(text)            // hello httpc
+    client := httpc.NewClient()
+    defer client.CloseIdleConnections()
+    resp, text, err := httpc.NewRequest(client).SetURL(server.URL).Send().End()
+    if err != nil {
+        fmt.Println(err)
+        return
+    }
+    fmt.Println(resp.StatusCode, text) // 200 hello httpc
 }
 ```
 
-配置完成后的 `Client` 可以并发复用。每次请求创建独立的 `Request` 和可变请求体；每个 Request 只发送一次、读取一次响应，重试时创建新对象。
-
-以下代码片段默认在 `main` 函数内独立使用，已创建 `client := httpc.NewClient()`；按需导入标准库及 `github.com/Albert-Zhan/httpc/v2/body`，替换地址和文件路径。Transport 包装器的类型与方法定义放在 `main` 外。
+配置完成后的 `Client` 可并发复用。每次请求创建独立的 `Request` 和可变正文；一个 Request 只发送一次、读取一次响应，重试时创建新对象。以下片段独立使用，默认已创建 `client`；按需导入相关包并替换地址、路径。
 
 ## 构建请求
 
 ```go
-resp, text, err := httpc.NewRequest(client).
-	SetURL("https://example.com/search?source=web").
-	SetParam("q", "go").SetParam("tag", "http").SetParam("tag", "client").
-	SetHeader("Accept", "application/json").
-	AddHeader("X-Tag", "one").AddHeader("x-tag", "two").
-	Send().End()
-if err != nil {
-	fmt.Println(err)
-	return
-}
-fmt.Println(resp.StatusCode, text)
-```
-
-| 设置 | 行为 |
-| --- | --- |
-| `SetMethod(name)` | 默认 GET，方法名不区分大小写 |
-| `SetHost(host)` | 覆盖 HTTP Host / HTTP/2 :authority；空字符串恢复 URL 主机 |
-| `SetParam(name, value)` | 合并 URL 查询参数，同名参数追加多个值 |
-| `SetHeader(name, value)` | 替换同名头的全部值，名称不区分大小写 |
-| `AddHeader(name, value)` | 追加同名头的一个值 |
-| `SetHeaderRaw(name, value)` | 保留名称写法，替换该精确键的全部值，建议用于 tls-client 后端 |
-| `AddHeaderRaw(name, value)` | 保留名称写法，向该精确键追加值，建议用于 tls-client 后端 |
-| `SetHeaderOrder(names...)` | 设置普通头的顺序，需要支持 fhttp 排序控制键的外部后端，建议使用 tls-client |
-| `SetPseudoHeaderOrder(names...)` | 设置 HTTP/2 伪头的完整排列，建议用于 tls-client 后端 |
-| `SetBasicAuth(user, password)` | 设置 Basic Auth，与手动 Authorization 以后一次设置为准 |
-| `SetBody(data)` | 设置正文，自动采用其 Content-Type；手动设置的 Content-Type 优先 |
-
-未设置 User-Agent 时默认使用 `httpc/` 加 `httpc.Version`，即 `httpc.DefaultUserAgent`；HTTP/1.1 和 HTTP/2 一致。自定义值优先，`SetHeader("User-Agent", "")` 可禁止发送该头。外部后端可在创建客户端时通过 `WithBackendUserAgent()` 选择由后端处理默认 UA，显式设置的值仍保留。
-
-`SetHost("api.example.com:8443")` 只改变请求声明的主机，不改变 URL 的连接目标或 TLS SNI。它接受主机名或主机名:端口；格式无效时 Send 返回 ErrInvalidRequest。`SetHeader("Host", ...)` 不能替代它。SetHost 与 SetURL 的调用顺序无关；清除覆盖可调用 `SetHost("")`。
-
-Go 1.27 标准后端的自动 Cookie 按覆盖后的 Host 匹配。tls-client 适配器沿用当前 fhttp v0.7.3 的原生行为，自动 Cookie 仍按 URL 主机匹配。
-
-需要在 HTTP/1.1 中保留请求头名称的大小写时，可使用 Raw 方法：
-
-```go
 req := httpc.NewRequest(client).
-	SetURL("https://example.com").
-	SetHeaderRaw("user-agent", "my-client/1.0").
-	SetHeaderRaw("x-device-id", "abc").
-	AddHeaderRaw("x-device-id", "def")
+    SetMethod("GET").SetURL("https://example.com/search?source=web").
+    SetParam("q", "go").SetParam("tag", "http").SetParam("tag", "client").
+    SetHeader("Accept", "application/json").
+    AddHeader("X-Tag", "one").AddHeader("x-tag", "two")
 resp, text, err := req.Send().End()
-```
-
-Raw 方法建议配合 [tls-client 后端](adapters/tlsclient/README.md) 使用，头映射的设置方式与直接操作 `fhttp.Header` 相同。名称按精确键匹配，`x-token` 和 `X-Token` 可以同时存在；与普通 SetHeader、AddHeader 混用时也不会自动合并。httpc 识别任意大小写的显式 User-Agent、Content-Type，含空值，避免再补充默认头。
-
-Raw 方法不控制排列顺序，也不改变发送协议。HTTP/2 仍按协议使用小写名称。名称、值、Cookie、压缩、重定向及特殊头的处理遵循发送后端；标准库后端的行为可能不同，尤其是 User-Agent、Host 和传输长度等字段。Host 值通常使用 SetHost。后端专用控制键应仅用于支持它的后端。
-
-使用 tls-client 后端时，可单独配置普通头和 HTTP/2 伪头的顺序：
-
-```go
-req.SetHeaderOrder("user-agent", "accept", "content-type", "x-device-id").
-	SetPseudoHeaderOrder(":method", ":authority", ":scheme", ":path")
-```
-
-普通头的排序名称会转为小写，不改变 Raw 头的名称写法；未列出的头仍保留，顺序由后端安排。伪头列表须包含 `:method`、`:authority`、`:scheme`、`:path` 各一次，只调整伪头之间的顺序，伪头仍在普通头之前；HTTP/1.1 不使用伪头配置。
-
-两个方法复制传入切片，重复调用替换配置，不传参数清除对应配置。名称非法、重复或伪头排列不完整时，Send 返回 ErrInvalidRequest；内置标准库后端不支持这种排序，配置后 Send 返回 ErrUnsupportedBackend。未配置或清除后不影响原行为。其他外部后端须支持 fhttp 排序控制键，自动生成字段的最终顺序也取决于后端实现。调试日志的 Header 为 JSON 对象，其键排列不代表线上发送顺序。
-
-## 请求体与上传
-
-### URL 编码表单
-
-```go
-data := body.NewURLEncode().SetData("name", "httpc").SetData("tag", "one").SetData("tag", "two")
-resp, text, err := httpc.NewRequest(client).
-	SetMethod("POST").SetURL("https://example.com/form").SetBody(data).Send().End()
-if err != nil {
-	fmt.Println(err)
-	return
-}
+if err != nil { fmt.Println(err); return }
 fmt.Println(resp.StatusCode, text)
 ```
 
-类型为 `application/x-www-form-urlencoded`，同名字段保留多个值。
+| 方法 | 行为 |
+| --- | --- |
+| `SetMethod(name)` | 默认 GET；传入名称转为大写 |
+| `SetURL(url)` | 设置请求地址 |
+| `SetParam(name, value)` | 合并查询参数，同名参数追加；查询串会重新编码 |
+| `SetHeader(name, value)` / `AddHeader(name, value)` | 规范化名称后替换该键全部值 / 追加一个值 |
+| `SetHeaderRaw(name, value)` / `AddHeaderRaw(name, value)` | 保留名称写法，按精确键替换 / 追加，不合并其他大小写的键 |
+| `SetHost(host)` | 设置 HTTP/1.1 Host 或 HTTP/2 `:authority`；空字符串恢复 URL 主机 |
+| `SetBasicAuth(user, password)` | 设置 Basic Auth，与普通 Authorization 设置以后一次为准 |
+| `SetBody(data)` | 设置正文；未显式设置 Content-Type 时采用正文类型 |
+| `SetCookieList(cookies)` | 替换当前请求的 Cookie 列表 |
 
-### 文本、JSON 与二进制
+默认 UA 为 `httpc.DefaultUserAgent`，值是 `httpc/` 加 `httpc.Version`。显式 UA 优先，空值可禁止发送该头。外部后端可在创建客户端时通过 `WithBackendUserAgent()` 接管默认 UA，详见[外部后端](#外部后端)。
+
+`SetHost` 接受主机名或主机名:端口，不改变连接目标或 TLS SNI；格式无效时 Send 返回 `ErrInvalidRequest`。`SetHeader("Host", ...)` 不能代替它。Go 1.27 标准后端按请求 Host（可由 SetHost 覆盖）匹配自动 Cookie；其他后端遵循自身规则。
+
+Raw 方法主要用于 HTTP/1.1 名称大小写控制，建议配合 tls-client；HTTP/2 名称仍为小写。特殊头及后端控制键的行为由后端决定。`SetHeaderOrder`、`SetPseudoHeaderOrder` 用于支持 fhttp 排序控制键的外部后端，内置标准后端会返回 `ErrUnsupportedBackend`；用法见[适配器的请求头说明](adapters/tlsclient/README.md#请求头)。
+
+## 正文与上传
+
+正文构造器位于 `github.com/Albert-Zhan/httpc/v2/body`：
+
+| 构造器 | 用法与类型 |
+| --- | --- |
+| `body.NewURLEncode()` | `SetData(name, value)` 追加字段，编码为 application/x-www-form-urlencoded |
+| `body.NewFormData()` | `SetData(name, value)`、`SetFile(name, path)` 构建 multipart/form-data |
+| `body.NewRawData()` | `SetData(data, contentType)` 设置已编码的字符串、字节切片或 nil |
 
 ```go
-data := body.NewRawData()
-data.SetData(`{"name":"httpc"}`, body.JSON)
+payload := body.NewRawData()
+payload.SetData(`{"name":"httpc"}`, body.JSON)
 resp, text, err := httpc.NewRequest(client).
-	SetMethod("POST").SetURL("https://example.com/items").SetBody(data).Send().End()
-if err != nil {
-	fmt.Println(err)
-	return
-}
+    SetMethod("POST").SetURL("https://example.com/items").SetBody(payload).Send().End()
+if err != nil { fmt.Println(err); return }
 fmt.Println(resp.StatusCode, text)
 ```
 
-`Raw.SetData(data, format)` 接受 `string`、`[]byte` 或 nil；nil 表示空正文，`SetData("", "")` 也合法。字节切片保存为副本，后续修改输入不会改变正文。每次调用替换此前内容与错误状态；不支持的类型通过 `data.Err()` 返回 `ErrRequestBody`，并阻止发送。
+Raw 不会自动序列化对象，JSON、protobuf 等数据应先编码。可使用 `body.Text`、`body.JSON`、`body.JavaScript`、`body.HTML`、`body.XML`、`body.Protobuf` 或自定义 MIME 类型；Protobuf 的值为 `application/x-protobuf`。字节切片会复制，nil 表示空正文，每次 SetData 替换此前内容和错误状态。
 
-Raw 不会自动序列化对象。JSON、protobuf 等数据需先编码，再传入字符串或字节切片。可使用 `body.Text`、`body.JSON`、`body.JavaScript`、`body.HTML`、`body.XML` 或自定义 MIME 类型；protobuf 编码结果可配合 `body.Protobuf`，其值为 `application/x-protobuf`。
+Form 在内存中构建正文，文件须存在；自定义边界使用 SetBoundary，并在添加内容前调用。Encode 完成后不能再添加字段或文件。正文构建错误可通过 `Err()` 提前检查，Send 也会检查并阻止发送。
 
-### multipart 文件上传
-
-```go
-data := body.NewFormData().SetData("name", "httpc").SetFile("file", "./image.png")
-resp, text, err := httpc.NewRequest(client).
-	SetMethod("POST").SetURL("https://example.com/upload").SetBody(data).Send().End()
-if err != nil {
-	fmt.Println(err)
-	return
-}
-fmt.Println(resp.StatusCode, text)
-```
-
-文件须提前存在。可在添加内容前用 `SetBoundary` 指定边界。Form 保留构建或编码时的第一个错误，可通过 `data.Err()` 检查，`Send()` 也会检查并阻止发送；`Encode()` 完成构建后不能再添加字段或文件。
-
-自定义正文只需实现 `body.Body` 的两个方法：`GetContentType() string`、`Encode() io.Reader`。可额外实现 `Err() error`，httpc 会在编码前后检查它。
+自定义正文实现 `body.Body` 的 `GetContentType() string` 和 `Encode() io.Reader`；可额外实现 `Err() error`，发送时会在编码前后检查。需要流式上传时，可使用自定义正文或[直接发送标准请求](#外部后端)。
 
 ## 读取响应
 
-调用 `Send()` 后选择一种读取方法，所有方法都会在结束或失败时关闭响应体：
+Send 后选择一种读取方法：
 
 | 方法 | 返回值 | 用途 |
 | --- | --- | --- |
-| `End()` | `(*http.Response, string, error)` | 读取文本 |
-| `EndByte()` | `(*http.Response, []byte, error)` | 读取字节 |
-| `EndTo(writer)` | `(*http.Response, error)` | 流式写入 `io.Writer` |
+| `End()` | `(*http.Response, string, error)` | 文本 |
+| `EndByte()` | `(*http.Response, []byte, error)` | 字节 |
+| `EndTo(writer)` | `(*http.Response, error)` | 流式输出到 io.Writer |
 
-`End`、`EndByte` 和 `EndTo` 不把 4xx/5xx 视为操作错误。`err == nil` 表示发送及读取完成，业务上是否成功还需判断 `resp.StatusCode`。响应头及响应 Cookie 也从 `resp` 获取。
-
-### 流式输出与大小限制
-
-`EndTo` 不在库内缓存完整正文，可写入文件、哈希计算器、`io.MultiWriter` 或自定义 Writer。Writer 由调用方管理，httpc 不会关闭它：
+这些方法结束或失败时都会关闭响应体。4xx/5xx 状态码本身不产生错误，业务代码仍需判断 `resp.StatusCode`；响应头和 Cookie 也从 resp 获取。
 
 ```go
 hash := sha256.New()
-resp, err := httpc.NewRequest(client).
-	SetURL("https://example.com/data").SetResponseLimit(8 << 20).Send().EndTo(hash)
-if err != nil {
-	fmt.Println(err)
-	return
-}
+resp, err := httpc.NewRequest(client).SetURL("https://example.com/data").
+    SetResponseLimit(8 << 20).Send().EndTo(hash)
+if err != nil { fmt.Println(err); return }
 fmt.Printf("status=%d sha256=%x\n", resp.StatusCode, hash.Sum(nil))
 ```
 
-`SetResponseLimit(n)` 限制所有 End 方法读取的正文字节数，按 gzip 解压后的大小计数，不依赖 Content-Length。默认不限制，0 或负值取消限制；恰好等于上限时成功，超过时返回 `ErrResponseTooLarge`，写入不会超过上限。自行读取 `GetResponse().Body` 时需自行限制大小并关闭。
+- `EndTo` 不缓存完整正文，也不关闭调用方的 Writer。失败时目标中可能留有部分数据；End、EndByte 不返回部分正文。
+- `SetResponseLimit(n)` 按解码后的字节数限制所有 End 方法，默认不限制，0 或负值取消。超过时返回 `ErrResponseTooLarge`，写入量不超过上限。
+- End 方法支持单一的 `Content-Encoding: gzip`，即使后端关闭自动解压也会解码；响应头保留后端提供的值。`.gz` 文件名或 application/gzip 类型不会触发解包，其他编码及编码组合不由 End 解码。
+- gzip 头配空正文按空正文处理；非空数据截断、损坏或校验失败返回 `ErrDecodeResponse`。
 
-失败时，`End`、`EndByte` 不返回部分正文；Writer 或文件可能保留已写入内容，调用方根据错误决定是否使用或清理。Writer 写入失败返回 `ErrWriteResponse`，原始错误链保留。
-
-所有 End 方法支持单一的 `Content-Encoding: gzip`，包括显式请求 gzip 的情况；返回的响应头保留 Transport 提供的值。仅有 `application/gzip` MIME 类型或 `.gz` 文件名不会触发解包，其他编码或编码组合按原始正文读取。gzip 头配空正文按空正文处理并保留状态码；非空数据截断、损坏或校验失败仍返回 `ErrDecodeResponse`。
-
-未发送就读取、重复发送、成功读取后再次读取均返回 `ErrInvalidRequest`。重复发送会关闭未读取的响应体；已有发送或读取错误时，后续读取保留原错误，不再访问正文。
-
-## 下载器
-
-v2 移除了 `Request.EndFile`，文件下载统一建议使用 `downloader`。已有响应需要写入文件或其他存储时，使用 `EndTo(io.Writer)`；迁移方式及行为差异见 [迁移说明](MIGRATING.md)。
-
-`downloader` 是核心模块的独立子包，可以使用 `*httpc.Client`、`*http.Client` 或其他标准请求发送器：
-
-```go
-client := httpc.NewClient().SetTimeout(0)
-defer client.CloseIdleConnections()
-d, err := downloader.New(client, downloader.Options{
-    Workers: 4,
-    ChunkSize: 8 << 20,
-    MaxBytes: 2 << 30,
-    Headers: http.Header{"Authorization": {"Bearer example"}},
-})
-if err != nil { return }
-ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-defer cancel()
-result, err := d.Download(ctx, "https://example.com/archive.zip", "./archive.zip")
-if err != nil { fmt.Println(err); return }
-fmt.Println(result.Path, result.Size, result.Mode, result.WorkersUsed)
-```
-
-此段需导入 `github.com/Albert-Zhan/httpc/v2/downloader`。目标目录须存在，已有文件不会被覆盖。下载器不关闭共享客户端。
-
-| 选项 | 默认值与含义 |
-| --- | --- |
-| `Workers` | 0 使用 4 个；1 强制单线程，跳过 Range 探测；上限 128 |
-| `ChunkSize` | 0 使用 8 MiB；这是分段长度，每个活动 worker 的复制缓冲区约 32 KiB |
-| `MaxBytes` | 0 不限制；按最终文件字节数计数，未知长度也会检查 |
-| `Retries` | 默认不重试；每个分段可额外重试 0–10 次，仅重试传输失败或正文截断 |
-| `Headers` | 复制后用于请求；Range、If-Range、Accept-Encoding 由下载器管理，传入这些头会报错 |
-| `Debug` | 配合 httpc.Client 输出请求日志，默认关闭 |
-| `OnProgress` | 每次下载串行回调 `Progress{Downloaded, Total, ActiveWorkers}`，约每 100ms 及开始、结束时调用 |
-
-进度的 Total 为 -1 表示未知。重试不会重复计数；降级重新下载时进度会归零。回调须及时返回，多次并发 Download 共用回调时，由调用方同步其共享状态。
-
-下载策略：
-
-- 默认用 `Range: bytes=0-0` 和 `Accept-Encoding: identity` 探测；返回 200 时直接复用该响应流式保存。
-- 返回有效 206、已知长度、强 ETag，且文件大于一个分段时，并行请求分段并携带 If-Range。只有 Accept-Ranges 或弱 ETag 时使用单线程。
-- 每个分段检查 Content-Range、总长度和实际字节数。下载期间返回 200、416、编码变化、最终资源 URL 或 ETag 变化时，取消并等待全部 worker，再重新发起一次单线程下载。
-- 401、403、404 等状态或畸形分段直接失败。不会把完整 200 正文写入某个分段的偏移位置。
-- 单线程支持未知长度和单一 gzip Content-Encoding；普通 `.gz` 文件或 application/gzip 类型不会触发解包。所有路径均流式复制。
-
-数据先写入同目录的随机临时文件，完成长度检查并同步、关闭后，用硬链接提交到目标路径，避免覆盖并发创建的文件。文件权限为 0600，文件系统须支持硬链接；失败或取消时删除临时文件。当前不提供跨进程断点续传、覆盖已有文件或持久化队列。
-
-下载失败可用 `errors.Is` 判断 `downloader.ErrInvalidOptions`、`ErrInvalidResponse`、`ErrHTTPStatus`、`ErrTooLarge`、`ErrDestinationExists`，以及底层文件错误和 context 错误。
-
-## 可选 tls-client 后端
-
-标准库后端仍由 `httpc.NewClient()` 创建。通用扩展入口是：
-
-```go
-// backend 实现 Do(*http.Request) (*http.Response, error)。
-client, err := httpc.NewClientWithDoer(backend)
-```
-
-Client 自身也实现 Doer，可直接 `client.Do(req)`；成功后调用方关闭 `resp.Body`。`httpc.WithDebug(ctx)` 可为这种调用开启发送日志。`NewRequest(client).Send(ctx)` 保留原有链式调用方式。
-
-bogdanfinn/tls-client 的适配器位于独立模块 `github.com/Albert-Zhan/httpc/adapters/tlsclient/v2`，固定依赖 tls-client v1.18.0，不会进入只使用核心库的项目：
-
-```go
-raw, err := tls_client.NewHttpClient(tls_client.NewNoopLogger(),
-    tls_client.WithClientProfile(profiles.DefaultClientProfile),
-    tls_client.WithDisableHttp3(),
-    tls_client.WithTimeoutSeconds(0),
-)
-if err != nil { return }
-defer raw.Close()
-client, err := tlsclient.New(raw)
-if err != nil { return }
-ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-defer cancel()
-resp, text, err := httpc.NewRequest(client).
-    SetURL("https://example.com").SetDebug(true).Send(ctx).End()
-if err != nil { fmt.Println(err); return }
-fmt.Println(resp.StatusCode, text)
-```
-
-此段需导入适配模块、`github.com/bogdanfinn/tls-client`（别名 tls_client）及其 profiles 包。配置和完整可运行下载示例见 [适配器说明](adapters/tlsclient/README.md)。
-
-外部后端自行管理代理、TLS、Jar、重定向和总超时。httpc 的 `SetProxy`、`ClearProxy`、`SetSkipVerify`、`SetTimeout`、`SetCookieJar`、`SetRedirect`、`CustomizeTransport`、`WrapTransport` 仅用于默认后端；在外部后端上调用会记录 `ErrUnsupportedBackend` 并阻止发送，需在 raw 上配置后重新创建包装客户端。日志配置和每个 Request 的头、正文、取消、响应限额继续可用。
-
-默认仍补充版本 UA；`httpc.NewClientWithDoer(backend, httpc.WithBackendUserAgent())` 可将默认 UA 交给后端，`Request.Send()` 和 `Client.Do()` 使用相同策略。tls-client 对应入口为 `tlsclient.New(raw, tlsclient.WithBackendUserAgent())`。此选项不会读取或合并后端默认头；tls-client 的 WithDefaultHeaders 仅在请求头完全为空时生效，正文类型、Cookie 或排序控制键等已产生请求头时仍遵循其原生规则。
-
-`CloseIdleConnections()` 会转发给外部后端的同名方法；不会调用其 `Close()`。适配器保留流式正文、响应 Trailer 及 raw 返回的重定向来源链；`resp.Request.Response` 指向导致当前请求产生的上一份响应，可沿其 Request.Response 继续向前查看，无来源时为 nil。历史正文保持 raw 已有的关闭状态，不重新读取或缓存。适配器桥接上游 fhttp Trace 到标准 httptrace，同时保留原有两种 Trace 回调。TLS 状态只映射公共字段，不能通过转换后的状态导出密钥材料。
-
-日志可以采集上游实际发出的写入事件，保留调用方 `Send(ctx)` 中的 Trace。上游专用拨号器可能不提供部分 DNS、TLS 事件，未发出的事件不会被补造；丢弃 context 或不发 Trace 的自定义后端会退回请求快照。外部后端的一次 Do 中若包含内部重定向，日志按 Trace 尝试记录，Hop 不代表其内部每一跳，快照 URL 仍为传入的 URL。
-
-不要为大文件下载启用上游 `tls_client.WithDebug()`，该选项会读取完整正文。使用 httpc 的有界日志预览和 `downloader.Options.Debug`。
-
-## Cookie 管理
-
-```go
-client.SetCookieJar(httpc.NewCookieJar())
-cookies := []*http.Cookie{{Name: "session", Value: "example"}}
-resp, text, err := httpc.NewRequest(client).
-	SetURL("https://example.com/profile").SetCookieList(cookies).Send().End()
-if err != nil {
-	fmt.Println(err)
-	return
-}
-fmt.Println(resp.StatusCode, text)
-```
-
-自动 Cookie 管理默认关闭。`SetCookieJar` 可接收标准库或其他 `http.CookieJar` 实现，`httpc.NewCookieJar()` 是创建标准库 Jar 的便捷入口；设为 nil 可禁用。配置后，共享客户端的请求会自动保存响应 Cookie，并发送与 URL 匹配的 Cookie。
-
-`SetCookieList` 设置当前请求的 Cookie，复制切片但共享 Cookie 对象；nil 或空列表可清除列表，列表元素不能为 nil。手动 Cookie 头与列表一起发送；发送期间不要修改共享的 Cookie 对象。
+需要自行读取或保留后端返回的原始字节时，使用 `GetResponse().Body` 或 `Client.Do(req)`，自行管理大小限制和关闭。未发送就读取、重复发送或重复读取返回 `ErrInvalidRequest`；重复发送会关闭未读取的响应体，已有错误会继续保留。
 
 ## 客户端配置
 
+`httpc.NewClient()` 创建标准库后端，以下连接和会话设置用于该后端：
+
 ```go
-client := httpc.NewClient().SetTimeout(10 * time.Second).SetProxy("http://127.0.0.1:10809")
+client.SetTimeout(10 * time.Second).SetProxy("http://127.0.0.1:10809")
 client.SetRedirect(func(req *http.Request, via []*http.Request) error {
-	return http.ErrUseLastResponse // 保留 3xx 响应
+    return http.ErrUseLastResponse // 返回 3xx 响应
 })
 client.CustomizeTransport(func(tr *http.Transport) {
-	tr.MaxIdleConnsPerHost = 10
-	tr.ResponseHeaderTimeout = 5 * time.Second
+    tr.MaxIdleConnsPerHost = 10
+    tr.ResponseHeaderTimeout = 5 * time.Second
 })
 ```
 
@@ -332,85 +152,117 @@ client.CustomizeTransport(func(tr *http.Transport) {
 | 响应头超时 / TLS 握手超时 | 15 秒 / 10 秒 |
 | 空闲连接回收时间 | 90 秒 |
 | 总空闲连接 / 每主机空闲连接 / 每主机连接上限 | 200 / 50 / 100 |
-| TLS | 验证证书，最低 TLS 1.2 |
-| HTTP/2 | 支持 HTTPS 协商 |
-| 代理 | 直连 |
+| TLS / HTTP/2 | 验证证书，最低 TLS 1.2；支持 HTTPS 协商 HTTP/2 |
+| 代理 / 自动 Cookie | 直连 / 关闭 |
 
-`SetTimeout(0)` 禁用客户端总超时，Transport 的独立超时仍生效。`SetSkipVerify(true)` 跳过服务端证书验证，适用于受控测试。
+`SetTimeout(0)` 禁用客户端总超时，Transport 的独立超时仍生效。`SetSkipVerify(true)` 跳过服务端证书验证。代理支持 http、https、socks5、socks5h，须包含协议和主机，显式端口范围为 1–65535；无效配置会阻止使用该内置 Transport 发送，设置合法地址或 ClearProxy 可恢复。
 
-代理支持 `http`、`https`、`socks5`、`socks5h`，需包含协议和主机，显式端口范围为 1–65535。非法配置返回错误并阻止使用该内置 Transport 发送；设置合法代理或 `ClearProxy()` 可恢复。
+### Cookie
+
+```go
+client.SetCookieJar(httpc.NewCookieJar())
+httpc.NewRequest(client).SetURL("https://example.com/profile").
+    SetCookieList([]*http.Cookie{{Name: "session", Value: "example"}})
+```
+
+SetCookieJar 接受标准 `http.CookieJar` 实现，设为 nil 禁用；`NewCookieJar()` 是标准库 Jar 的便捷入口。Jar 自动保存响应 Cookie 并选择匹配的 Cookie，主机匹配规则见[构建请求](#构建请求)。
+
+SetCookieList 复制切片但共享 Cookie 对象；nil 或空列表清空配置，nil 元素在 Send 时返回 `ErrInvalidRequest`。列表与手动 Cookie 头一起发送，发送期间不要修改共享 Cookie 对象。
 
 ### context 与连接复用
 
 ```go
-ctx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
-	GotConn: func(info httptrace.GotConnInfo) { fmt.Println("connection reused:", info.Reused) },
-})
-ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 defer cancel()
-
+ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+    GotConn: func(info httptrace.GotConnInfo) { fmt.Println("reused:", info.Reused) },
+})
 resp, text, err := httpc.NewRequest(client).SetURL("https://example.com/api").Send(ctx).End()
-if err != nil {
-	fmt.Println(err)
-	return
-}
+if err != nil { fmt.Println(err); return }
 fmt.Println(resp.StatusCode, text)
 ```
 
-此例使用 `net/http/httptrace`。`Send(ctx)` 保留调用方的 context 和 Trace，省略时使用 `context.Background()`；与客户端超时以先到者为准。开启库的调试也不会覆盖调用方已有回调。
+省略 context 时使用 `context.Background()`，传入的 context 和 Trace 会保留；超时以 context 与客户端中先到者为准，调试不会覆盖已有回调。客户端应在发送前完成配置，使用期间不要复制或修改配置。
 
-发送前完成客户端配置，使用期间不要修改配置或复制 Client。`CloseIdleConnections()` 可与请求并发调用，用于释放空闲连接，不中断活跃请求，也不禁止后续请求。
+`CloseIdleConnections()` 可以与请求并发调用，释放空闲连接而不打断活跃请求，也不禁止后续发送。
 
 ## Transport 扩展
 
-在 `main` 外定义包装器，修改请求时克隆并保留原 context：
+在 main 外定义包装器；修改请求时克隆并保留原 context：
 
 ```go
 type headerTransport struct{ Next http.RoundTripper }
 
 func (t *headerTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	changed := req.Clone(req.Context())
-	changed.Header.Set("X-Application", "demo")
-	return t.Next.RoundTrip(changed)
+    changed := req.Clone(req.Context())
+    changed.Header.Set("X-Application", "demo")
+    return t.Next.RoundTrip(changed)
 }
 ```
 
-发送前注册，包装器供所有请求共享，内部状态需并发安全：
+发送前注册：
 
 ```go
 client.WrapTransport(func(next http.RoundTripper) http.RoundTripper {
-	return &headerTransport{Next: next}
+    return &headerTransport{Next: next}
 })
 ```
 
-后注册的包装器在外层：先 A、后 B，发送顺序为 B、A、原发送链，返回顺序相反。不要提前消耗实际正文；替换正文时，包装器负责原正文的关闭、新正文的长度和重放能力。
+后注册的包装器在外层：先 A 后 B，发送顺序为 B、A、原发送链。包装器须支持并发使用，不提前消耗正文；替换正文时负责原正文关闭、新长度及重放能力。
 
-`CustomizeTransport`、`SetProxy`、`SetSkipVerify` 配置的是内置 Transport。通过 `next` 委托发送时继续使用这些配置；返回独立 Transport 接管发送时，其代理、TLS、连接池由调用方配置。外层客户端的超时、CookieJar 和重定向策略继续保留，自定义实现需遵守请求 context。
+CustomizeTransport、SetProxy、SetSkipVerify 配置内置 Transport。包装器通过 next 委托发送时继续使用这些配置；独立 Transport 的代理、TLS 和连接池由实现方管理，外层客户端的超时、Jar 和重定向策略仍保留。
 
-`CloseIdleConnections()` 逐层调用已注册 Transport 的同名方法，缺少该方法的中间层不会阻断后续层，并兜底关闭内置连接池。向传入的 `next` 同步转发关闭不会重复关闭该注册层。外部自有连接池需通过同名方法释放，库不会调用 `Close()`。
+CloseIdleConnections 会逐层处理注册的发送链，并关闭内置空闲连接池。持有连接池的包装器应实现同名方法；向 next 转发关闭不会重复关闭注册层。nil 包装器或 nil 返回值会使发送返回 `ErrInvalidRequest`，后续合法 WrapTransport 可恢复，原有效链保留。
 
-nil 包装器或 nil 返回值（包括带类型的 nil）会使 `Send` 返回 `ErrInvalidRequest`；原有效链保留，后续合法 `WrapTransport` 调用可恢复。
+## 外部后端
+
+外部发送器实现 `Do(*http.Request) (*http.Response, error)`，须支持并发、context 及正文关闭约定：
+
+```go
+client, err := httpc.NewClientWithDoer(backend)
+```
+
+默认补版本 UA，可通过 `httpc.WithBackendUserAgent()` 将默认 UA 交给后端。两种策略都适用于 Request.Send 和 Client.Do，显式 UA（含空值）保持原样。
+
+Client 也实现 Doer，可直接发送标准库请求；调用方关闭成功响应的 Body，`httpc.WithDebug(ctx)` 可为这种调用开启调试。代理、Transport、TLS、Jar、重定向和总超时在外部后端配置；误用 httpc 的对应配置方法会记录 `ErrUnsupportedBackend` 并阻止发送，需重新创建包装客户端。日志、请求正文、context 和响应限额仍由 httpc 管理。
+
+CloseIdleConnections 转发至后端同名方法，不调用其 Close。tls-client 的接入、默认头、请求头顺序及响应转换规则统一见 [tls-client 适配器](adapters/tlsclient/README.md)。
+
+## 下载器
+
+GET 文件下载使用 `github.com/Albert-Zhan/httpc/v2/downloader`；已发送的响应或 POST 输出使用 EndTo。
+
+```go
+client.SetTimeout(0)
+ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+defer cancel()
+d, err := downloader.New(client, downloader.Options{Workers: 4, MaxBytes: 2 << 30})
+if err != nil { fmt.Println(err); return }
+result, err := d.Download(ctx, "https://example.com/archive.zip", "./archive.zip")
+if err != nil { fmt.Println(err); return }
+fmt.Println(result.Path, result.Size, result.Mode)
+```
+
+下载器流式处理正文，根据 Range、强 ETag 和长度决定是否分段并行，不支持并行时使用单线程。长时间下载应禁用客户端总超时，再用任务 context 控制期限。目标目录须存在，已有文件不会被覆盖；失败会清理临时文件，文件系统须支持硬链接。
+
+配置、进度回调、降级策略和文件规则见 [下载器说明](downloader/README.md)。
 
 ## 调试日志
 
-调试默认关闭。请求上调用 `SetDebug(true)` 后，默认输出到 `os.Stdout`，**默认不脱敏**：
+默认关闭调试。请求上调用 SetDebug(true) 开启，默认输出到 `os.Stdout`，**默认不脱敏**：
 
 ```go
 client.SetDebugOutput(os.Stderr).AddDebugSensitiveFields("Authorization", "Cookie", "password", "token")
 _, _, err := httpc.NewRequest(client).
-	SetURL("https://example.com/profile?token=demo").
-	SetCookieList([]*http.Cookie{{Name: "session", Value: "example"}}).SetDebug(true).Send().End()
-if err != nil {
-	fmt.Println(err)
-}
+    SetURL("https://example.com/profile?token=demo").SetDebug(true).Send().End()
+if err != nil { fmt.Println(err) }
 ```
 
-- 只匹配显式指定的 key，忽略大小写和分隔符，`token` 不匹配 `access_token`。可多次调用追加规则。
-- 规则覆盖请求头、查询参数、JSON（递归）和表单字段。`Cookie` 隐藏所有 Cookie 值，指定 Cookie 名称只隐藏对应项；`filename` 用于 multipart 文件名。
-- `Referer` 等 URL 字段可用 `username`、`password`、`userinfo`、`fragment` 控制对应部分。HTTP/2 的 `:path` 同样过滤查询参数，指定 `Host` 也会过滤 `:authority`。
-- 正文仅预览不超过 64 KiB 的可重放副本；过大、不可重放或非 UTF-8 正文省略。multipart 只展示字段和文件名。启用脱敏后，无法解析或不支持字段过滤的正文省略。
+SetDebugOutput 接受调用方管理的 Writer；nil 或 io.Discard 丢弃日志，写入错误不影响请求。同一客户端串行写完整记录，多个客户端共用 Writer 时需自行保证并发安全。
 
-一次 HTTP/1.1 请求的日志示例：
+脱敏规则只匹配已配置的名称，忽略大小写和分隔符；`token` 不匹配 `access_token`。可多次追加规则，范围包括请求头、查询参数、JSON 嵌套字段和表单。`Cookie` 隐藏全部 Cookie 值，单独配置 Cookie 名只隐藏对应值；`filename` 对应 multipart 文件名。URL 的用户名、密码和凭据可分别配置 username、password、userinfo，fragment 用于片段；Referer 和 HTTP/2 `:path` 按相应 URL 规则处理，Host 规则同时作用于 `:authority`。
+
+正文只预览最多 64 KiB 的可重放副本，过大、不可重放或非 UTF-8 正文省略；multipart 只展示字段和文件名。配置脱敏后，不能解析或不支持字段过滤的正文也会省略。预览不消耗实际正文，也不代表所有字节已发送。
 
 ```text
 [httpc Debug]
@@ -421,59 +273,50 @@ Attempt: 1
 Request: GET https://example.com/profile?token=%5BREDACTED%5D
 Protocol: HTTP/1.1
 Header-Source: transport
-Header: {"Accept-Encoding":["gzip"],"Cookie":["[REDACTED]"],"Host":["example.com"],"User-Agent":["httpc/2.0.0-dev"]}
-Cookies: {"session":"[REDACTED]"}
+Header: {"Accept-Encoding":["gzip"],"Host":["example.com"],"User-Agent":["httpc/2.0.0-dev"]}
+Cookies: {}
 Body-Preview:
 Write: completed
 -------------------------------------------------------------------
 ```
 
-`Request-ID` 关联同一次 Send，`Hop` 区分重定向，`Attempt` 区分该跳的连接与发送尝试；日志不额外重试请求。请求目标不包含 URL 用户凭据及 fragment，凭据生成的 Authorization 按头字段规则处理。脱敏不改变实际请求或返回错误。
-
-`Header-Source: transport` 表示采集到写出阶段的头，可包含自动 Cookie、gzip、Host、长度、传输编码及 HTTP/2 伪头；失败时可能只有部分字段。外部包装器经 `next` 传入的改写请求同样可采集。自定义实现不提供追踪事件或丢弃原 context 时，显示 `request snapshot`，快照不代表实际发送内容。
-
-| Write | 含义 |
+| 字段 | 含义 |
 | --- | --- |
-| `completed` / `failed` | 观测到请求写入完成 / 失败 |
-| `not_started` | 获取连接失败，尚未进入请求写入阶段 |
-| `unconfirmed` | 已观测到连接或头信息，但未确认写入结果 |
-| `unobserved` | 没有足够的追踪事件判断发送状态 |
+| Request-ID / Hop / Attempt | 同一次发送 / 标准后端的重定向跳数 / 该跳的连接与发送尝试 |
+| Header-Source: transport | 写出阶段采集的头，可含自动生成字段，失败时可能只有部分字段 |
+| Header-Source: request snapshot | 后端缺少 Trace 或丢弃 context，快照不代表实际发送内容 |
+| Write: completed / failed | 观测到写入完成 / 失败 |
+| Write: not_started | 获取连接失败，尚未进入写入阶段 |
+| Write: unconfirmed / unobserved | 已有事件但未确认写入结果 / 事件不足以判断发送状态 |
 
-头字段可能仍在缓冲区，`completed` 不保证服务端已处理请求；正文预览也不代表所有字节已发送。日志只反映记录时已确认的状态。
+Header 的 JSON 键排列不表示线上顺序，可通过 httptrace.WroteHeaderField 观察顺序。请求目标不显示 URL 用户凭据和 fragment；Authorization 仍按头字段规则脱敏。写入完成也不保证服务端已处理请求。
 
-同一客户端按完整记录串行写入，多个客户端共用 Writer 时需由调用方保证并发安全。Writer 由调用方关闭；`SetDebugOutput(nil)` 或 `io.Discard` 丢弃日志，日志写入失败不影响 HTTP 请求。
+外部后端只记录其实际发出的追踪事件，专用拨号器可能缺少部分 DNS、TLS 事件。其一次 Do 内部的重定向会显示为 Trace 尝试，Hop 不代表内部每一跳，快照 URL 保留初始地址。调用方的 context 和已有 Trace 回调继续保留。
 
 ## 错误处理
 
-使用 `errors.Is(err, httpc.ErrXXX)` 判断类别，`errors.As` 获取 `*httpc.Error`；底层原因保留在错误链中：
+使用 `errors.Is` 判断类别，`errors.As` 获取 `*httpc.Error` 的 Op、Kind；底层错误链保留，可继续判断文件、网络和 context 错误：
 
 ```go
-_, _, err := httpc.NewRequest(client).SetURL("https://example.com/api").SetResponseLimit(8 << 20).Send().End()
+_, _, err := httpc.NewRequest(client).SetURL("https://example.com/api").Send().End()
 if err != nil {
-	if errors.Is(err, httpc.ErrResponseTooLarge) {
-		fmt.Println("响应正文过大")
-	}
-	var detail *httpc.Error
-	if errors.As(err, &detail) {
-		fmt.Println(detail.Op, detail.Kind)
-	}
-	return
+    if errors.Is(err, httpc.ErrResponseTooLarge) { fmt.Println("响应正文过大") }
+    var detail *httpc.Error
+    if errors.As(err, &detail) { fmt.Println(detail.Op, detail.Kind) }
 }
 ```
 
 | 类别 | 含义 |
 | --- | --- |
-| `ErrInvalidRequest` | URL、参数、方法、Transport 包装配置或调用状态无效 |
+| `ErrInvalidRequest` | 请求构建、Transport 包装配置或调用状态无效 |
+| `ErrUnsupportedBackend` | 所选后端不支持该配置方法 |
 | `ErrInvalidProxy` | 代理地址无效 |
 | `ErrRequestBody` / `ErrUploadFile` | 正文构建或编码失败 / 上传文件处理失败 |
 | `ErrSendRequest` | 连接、TLS、代理、取消、超时等发送失败 |
-| `ErrReadResponse` / `ErrWriteResponse` | 响应读取失败 / Writer 写入失败 |
-| `ErrResponseTooLarge` | 解码后正文超过限制 |
-| `ErrDecodeResponse` | gzip 解析或解压失败 |
-| `ErrHTTPStatus` | 下载器收到不符合下载阶段预期的状态码 |
+| `ErrReadResponse` / `ErrWriteResponse` | 正文读取失败 / Writer 写入失败 |
+| `ErrResponseTooLarge` / `ErrDecodeResponse` | 解码后正文超过限制 / gzip 解码失败 |
+| `ErrHTTPStatus` | 下载器收到不符合阶段预期的状态码 |
 
-同一错误可能匹配多个类别：上传文件不存在可匹配 `ErrRequestBody`、`ErrUploadFile` 和 `os.ErrNotExist`。`GetResponse()` 和 `GetError()` 分别返回响应对象与最近一次发送或读取错误。
+同一错误可匹配多个类别，例如上传文件不存在可同时匹配 ErrRequestBody、ErrUploadFile 和 os.ErrNotExist。GetResponse、GetError 分别返回响应和最近一次错误。
 
-## 开发与许可证
-
-测试组织、本地检查和 CI 发布流程见 [CONTRIBUTING.md](CONTRIBUTING.md)。项目使用 [Apache License 2.0](LICENSE)。
+项目采用 [Apache License 2.0](LICENSE)。

@@ -23,7 +23,7 @@ const (
 
 // Raw 构建指定 MIME 类型的文本或二进制正文，不支持并发修改。
 type Raw struct {
-	// string 保存任意字节的不可变快照，并保持 Raw 值可比较。
+	// 不可变字节快照使 Raw 值保持可比较。
 	data   string
 	format string
 	err    error
