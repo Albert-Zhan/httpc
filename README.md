@@ -79,6 +79,8 @@ fmt.Println(resp.StatusCode, text)
 | `AddHeader(name, value)` | 追加同名头的一个值 |
 | `SetHeaderRaw(name, value)` | 保留名称写法，替换该精确键的全部值，建议用于 tls-client 后端 |
 | `AddHeaderRaw(name, value)` | 保留名称写法，向该精确键追加值，建议用于 tls-client 后端 |
+| `SetHeaderOrder(names...)` | 设置普通头的顺序，需要支持 fhttp 排序控制键的外部后端，建议使用 tls-client |
+| `SetPseudoHeaderOrder(names...)` | 设置 HTTP/2 伪头的完整排列，建议用于 tls-client 后端 |
 | `SetBasicAuth(user, password)` | 设置 Basic Auth，与手动 Authorization 以后一次设置为准 |
 | `SetBody(data)` | 设置正文，自动采用其 Content-Type；手动设置的 Content-Type 优先 |
 
@@ -102,6 +104,17 @@ resp, text, err := req.Send().End()
 Raw 方法建议配合 [tls-client 后端](adapters/tlsclient/README.md) 使用，头映射的设置方式与直接操作 `fhttp.Header` 相同。名称按精确键匹配，`x-token` 和 `X-Token` 可以同时存在；与普通 SetHeader、AddHeader 混用时也不会自动合并。httpc 识别任意大小写的显式 User-Agent、Content-Type，含空值，避免再补充默认头。
 
 Raw 方法不控制排列顺序，也不改变发送协议。HTTP/2 仍按协议使用小写名称。名称、值、Cookie、压缩、重定向及特殊头的处理遵循发送后端；标准库后端的行为可能不同，尤其是 User-Agent、Host 和传输长度等字段。Host 值通常使用 SetHost。后端专用控制键应仅用于支持它的后端。
+
+使用 tls-client 后端时，可单独配置普通头和 HTTP/2 伪头的顺序：
+
+```go
+req.SetHeaderOrder("user-agent", "accept", "content-type", "x-device-id").
+	SetPseudoHeaderOrder(":method", ":authority", ":scheme", ":path")
+```
+
+普通头的排序名称会转为小写，不改变 Raw 头的名称写法；未列出的头仍保留，顺序由后端安排。伪头列表须包含 `:method`、`:authority`、`:scheme`、`:path` 各一次，只调整伪头之间的顺序，伪头仍在普通头之前；HTTP/1.1 不使用伪头配置。
+
+两个方法复制传入切片，重复调用替换配置，不传参数清除对应配置。名称非法、重复或伪头排列不完整时，Send 返回 ErrInvalidRequest；内置标准库后端不支持这种排序，配置后 Send 返回 ErrUnsupportedBackend。未配置或清除后不影响原行为。其他外部后端须支持 fhttp 排序控制键，自动生成字段的最终顺序也取决于后端实现。调试日志的 Header 为 JSON 对象，其键排列不代表线上发送顺序。
 
 ## 请求体与上传
 

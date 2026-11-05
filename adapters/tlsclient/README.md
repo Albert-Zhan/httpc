@@ -70,7 +70,18 @@ req := httpc.NewRequest(client).
 
 两个方法分别等价于为 `fhttp.Header` 的精确 map 键赋值和追加值；`x-token` 与 `X-Token` 不会合并。适配器保留名称和值，由上游处理特殊头、Cookie、压缩和重定向。httpc 未发现任何大小写形式的 User-Agent 时补充默认 UA；构建器有正文且未显式设置 Content-Type 时采用正文类型，显式空值也会保留。HTTP/1.1 的普通头保留写法，HTTP/2 名称仍为小写。
 
-可以通过这些方法传入 `fhttp.HeaderOrderKey`、`fhttp.PHeaderOrderKey` 等上游控制键，多个值使用 AddHeaderRaw 追加；其含义和限制由 fhttp 定义。httpc 核心不解析这些键。标准库后端不识别这些控制键，对 User-Agent、Host、传输长度等特殊头的处理也可能不同。
+普通头排序建议使用 `SetHeaderOrder`，HTTP/2 伪头排序使用 `SetPseudoHeaderOrder`：
+
+```go
+req.SetHeaderOrder("user-agent", "accept", "content-type", "x-device-id").
+    SetPseudoHeaderOrder(":method", ":authority", ":scheme", ":path")
+```
+
+普通头的排序名称转为小写，不改变 Raw 头的名称写法；未列出的头不会被删除，自动生成字段的顺序遵循上游实现。伪头列表须为 `:method`、`:authority`、`:scheme`、`:path` 的完整排列，各一次；只调整它们之间的顺序，HTTP/1.1 不使用伪头配置。两个方法复制传入切片，后一次调用替换前一次，不传参数清除对应配置。错误的名称、重复项或不完整的伪头列表在 Send 时返回 `httpc.ErrInvalidRequest`。
+
+内置标准库后端不支持这两个排序方法，配置后 Send 返回 `httpc.ErrUnsupportedBackend`。调试日志 Header 的 JSON 键排列不代表线上顺序；可通过 context 中的 httptrace.WroteHeaderField 观察发送事件。
+
+Raw 方法仍可传入 `fhttp.HeaderOrderKey`、`fhttp.PHeaderOrderKey` 等上游控制键，多个值使用 AddHeaderRaw 追加；Raw 透传沿用上游规则，专用排序方法会校验对应配置。标准库后端不识别这些控制键，对 User-Agent、Host、传输长度等特殊头的处理也可能不同。
 
 响应 TLS 公共字段会映射；转换后的 `tls.ConnectionState` 不具备上游内部导出密钥状态，请勿对其调用 ExportKeyingMaterial。响应 Request 包含上游最终请求的 URL 和头；调试的一次外部 Do 中，内部重定向显示为 Trace 尝试，快照 URL 为初始 URL。
 

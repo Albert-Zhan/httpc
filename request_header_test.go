@@ -171,6 +171,120 @@ func TestRawHeadersOverrideDefaults(t *testing.T) {
 	}
 }
 
+func TestHeaderOrderConfiguration(t *testing.T) {
+	var sent *http.Request
+	client, err := NewClientWithDoer(&testDoer{send: func(r *http.Request) (*http.Response, error) {
+		sent = r
+		return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ordinary := []string{"X-Second", "USER-AGENT", "x-first"}
+	pseudo := []string{":method", ":path", ":authority", ":scheme"}
+	req := NewRequest(client).SetURL("https://example.test").SetHeaderRaw("X-FiRsT", "kept")
+	if req.SetHeaderOrder("invalid name").SetHeaderOrder(ordinary...).SetPseudoHeaderOrder(pseudo...) != req {
+		t.Fatal("setter changed request instance")
+	}
+	ordinary[0], pseudo[0] = "mutated", "mutated"
+	if _, _, err := req.Send().End(); err != nil {
+		t.Fatal(err)
+	}
+	wantOrder := []string{"x-second", "user-agent", "x-first"}
+	wantPseudo := []string{":method", ":path", ":authority", ":scheme"}
+	if !reflect.DeepEqual(sent.Header[headerOrderKey], wantOrder) || !reflect.DeepEqual(sent.Header[pseudoHeaderOrderKey], wantPseudo) || sent.Header["X-FiRsT"][0] != "kept" {
+		t.Fatalf("sent headers=%v", sent.Header)
+	}
+	sent.Header[headerOrderKey][0] = "backend mutation"
+	sent.Header[pseudoHeaderOrderKey][0] = "backend mutation"
+	if !reflect.DeepEqual(req.header[headerOrderKey], wantOrder) || !reflect.DeepEqual(req.header[pseudoHeaderOrderKey], wantPseudo) {
+		t.Fatal("backend mutated builder configuration")
+	}
+	for _, tc := range []struct {
+		name      string
+		clear     func(*Request)
+		remaining string
+	}{
+		{"ordinary", func(r *Request) { r.SetHeaderOrder() }, pseudoHeaderOrderKey},
+		{"pseudo", func(r *Request) { r.SetPseudoHeaderOrder() }, headerOrderKey},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := NewRequest(client).SetURL("http://example.test").SetHeaderOrder(wantOrder...).SetPseudoHeaderOrder(wantPseudo...)
+			tc.clear(req)
+			if _, _, err := req.Send().End(); err != nil {
+				t.Fatal(err)
+			}
+			for _, key := range []string{headerOrderKey, pseudoHeaderOrderKey} {
+				if _, present := sent.Header[key]; present != (key == tc.remaining) {
+					t.Fatalf("remaining configuration=%v", sent.Header)
+				}
+			}
+		})
+	}
+}
+
+func TestHeaderOrderValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		configure func(*Request)
+	}{
+		{"empty name", func(r *Request) { r.SetHeaderOrder("") }},
+		{"space", func(r *Request) { r.SetHeaderOrder("bad name") }},
+		{"newline", func(r *Request) { r.SetHeaderOrder("x-tag\r\nx-other") }},
+		{"non ASCII", func(r *Request) { r.SetHeaderOrder("中文") }},
+		{"Unicode case folding", func(r *Request) { r.SetHeaderOrder("\u212A") }},
+		{"pseudo in ordinary list", func(r *Request) { r.SetHeaderOrder(":method") }},
+		{"duplicate ordinary", func(r *Request) { r.SetHeaderOrder("X-Tag", "x-tag") }},
+		{"missing pseudo", func(r *Request) { r.SetPseudoHeaderOrder(":method", ":path", ":scheme") }},
+		{"duplicate pseudo", func(r *Request) { r.SetPseudoHeaderOrder(":method", ":path", ":scheme", ":path") }},
+		{"unknown pseudo", func(r *Request) { r.SetPseudoHeaderOrder(":method", ":path", ":scheme", ":status") }},
+		{"uppercase pseudo", func(r *Request) { r.SetPseudoHeaderOrder(":Method", ":path", ":scheme", ":authority") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			client, err := NewClientWithDoer(&testDoer{send: func(*http.Request) (*http.Response, error) {
+				t.Fatal("invalid configuration reached backend")
+				return nil, nil
+			}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			invalidBody := body.NewRawData()
+			invalidBody.SetData(123, body.JSON)
+			req := NewRequest(client).SetURL("http://example.test").SetBody(invalidBody)
+			tc.configure(req)
+			assertError(t, req.Send().GetError(), ErrInvalidRequest, nil)
+		})
+	}
+}
+
+func TestHeaderOrderRequiresExternalBackend(t *testing.T) {
+	for _, configure := range []func(*Request){
+		func(r *Request) { r.SetHeaderOrder("User-Agent") },
+		func(r *Request) { r.SetPseudoHeaderOrder(":method", ":authority", ":scheme", ":path") },
+	} {
+		client := NewClient()
+		calls := 0
+		client.client.Transport = testRoundTripper(func(*http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{StatusCode: 200, Body: http.NoBody}, nil
+		})
+		invalidBody := body.NewRawData()
+		invalidBody.SetData(123, body.JSON)
+		req := NewRequest(client).SetURL("http://example.test").SetBody(invalidBody)
+		configure(req)
+		assertError(t, req.Send().GetError(), ErrUnsupportedBackend, nil)
+		if calls != 0 {
+			t.Fatal("unsupported configuration reached transport")
+		}
+		req = NewRequest(nil).SetURL("http://example.test")
+		configure(req)
+		req.SetHeaderOrder().SetPseudoHeaderOrder().SetClient(client)
+		if _, _, err := req.Send().End(); err != nil || calls != 1 {
+			t.Fatalf("cleared configuration: calls=%d err=%v", calls, err)
+		}
+	}
+}
+
 func TestSentHeadersDoNotShareBuilderValues(t *testing.T) {
 	var sent *http.Request
 	client := NewClient()
