@@ -7,9 +7,9 @@ import (
 )
 
 var (
-	// ErrUnsupportedBackend 表示当前外部后端不支持此客户端配置方法。
+	// ErrUnsupportedBackend 表示当前发送后端不支持所用的配置方法。
 	ErrUnsupportedBackend = errors.New("httpc: unsupported backend configuration")
-	// ErrInvalidRequest 表示请求 URL、参数、方法、Transport 包装配置或调用状态无效。
+	// ErrInvalidRequest 表示请求构建、Transport 包装配置或调用状态无效。
 	ErrInvalidRequest = errors.New("httpc: invalid request")
 	// ErrInvalidProxy 表示代理地址配置无效。
 	ErrInvalidProxy = errors.New("httpc: invalid proxy")

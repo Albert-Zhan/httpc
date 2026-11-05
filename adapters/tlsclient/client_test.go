@@ -297,6 +297,161 @@ func TestRawHeadersMatchNative(t *testing.T) {
 	}
 }
 
+func TestRequestHeaderOrder(t *testing.T) {
+	ordinary := []string{"X-SeCoNd", "USER-AGENT", "x-first"}
+	pseudo := []string{":path", ":method", ":scheme", ":authority"}
+	for _, h1 := range []bool{true, false} {
+		for _, tc := range []struct {
+			name             string
+			ordinary, pseudo []string
+		}{
+			{"both", ordinary, pseudo},
+			{"ordinary only", ordinary, nil},
+			{"pseudo only", nil, pseudo},
+			{"clear both", nil, nil},
+		} {
+			t.Run(fmt.Sprintf("http1=%v/%s", h1, tc.name), func(t *testing.T) {
+				wire := make(chan string, 4)
+				server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.Header.Get("X-First") != "first" || r.Header.Get("X-Second") != "second" || r.Header.Get("X-Other") != "unlisted" {
+						t.Errorf("lost headers: %v", r.Header)
+					}
+					if h1 {
+						w.Header().Set("Connection", "close")
+					}
+					if r.URL.Path == "/start" {
+						http.SetCookie(w, &http.Cookie{Name: "session", Value: "kept", Path: "/"})
+						w.Header().Set("Location", "/finish")
+						w.WriteHeader(http.StatusTemporaryRedirect)
+						return
+					}
+					if r.Header.Get("Cookie") != "session=kept" {
+						t.Errorf("redirect cookie=%q", r.Header.Get("Cookie"))
+					}
+					_, _ = io.WriteString(w, "ok")
+				}))
+				if h1 {
+					server.Listener = &headerCaptureListener{Listener: server.Listener, headers: wire}
+					server.Start()
+				} else {
+					server.EnableHTTP2 = true
+					server.StartTLS()
+				}
+				defer server.Close()
+				native, _ := newTestClient(t, h1)
+				_, client := newTestClient(t, h1)
+				var logs bytes.Buffer
+				client.SetDebugOutput(&logs)
+				headers := fhttp.Header{
+					"user-agent": {"order-agent"}, "Accept-Encoding": {"identity"},
+					"X-SeCoNd": {"second"}, "x-first": {"first"}, "X-Other": {"unlisted"},
+				}
+				var mu sync.Mutex
+				var nativeSequence, wrappedSequence []string
+				record := func(dst *[]string, name string) {
+					mu.Lock()
+					defer mu.Unlock()
+					*dst = append(*dst, name)
+				}
+				ctx := ftrace.WithClientTrace(context.Background(), &ftrace.ClientTrace{
+					WroteHeaderField: func(name string, _ []string) { record(&nativeSequence, name) },
+					WroteHeaders:     func() { record(&nativeSequence, "end") },
+				})
+				nativeReq, err := fhttp.NewRequestWithContext(ctx, "GET", server.URL+"/start", nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				nativeReq.Header = headers.Clone()
+				if len(tc.ordinary) > 0 {
+					nativeReq.Header[fhttp.HeaderOrderKey] = slices.Clone(tc.ordinary)
+				}
+				if len(tc.pseudo) > 0 {
+					nativeReq.Header[fhttp.PHeaderOrderKey] = slices.Clone(tc.pseudo)
+				}
+				nativeResp, err := native.Do(nativeReq)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, readErr := io.Copy(io.Discard, nativeResp.Body)
+				_ = nativeResp.Body.Close()
+				if readErr != nil {
+					t.Fatal(readErr)
+				}
+				stdCtx := httptrace.WithClientTrace(context.Background(), &httptrace.ClientTrace{
+					WroteHeaderField: func(name string, _ []string) { record(&wrappedSequence, name) },
+					WroteHeaders:     func() { record(&wrappedSequence, "end") },
+				})
+				req := httpc.NewRequest(client).SetURL(server.URL + "/start").SetDebug(true)
+				for name, values := range headers {
+					req.SetHeaderRaw(name, values[0])
+				}
+				req.SetHeaderOrder("x-other").SetHeaderOrder(tc.ordinary...).
+					SetPseudoHeaderOrder(":method", ":authority", ":scheme", ":path").SetPseudoHeaderOrder(tc.pseudo...)
+				resp, text, err := req.Send(stdCtx).End()
+				if err != nil || text != "ok" || resp.ProtoMajor != nativeResp.ProtoMajor || (!h1 && resp.ProtoMajor != 2) {
+					t.Fatalf("response=%v body=%q err=%v", resp, text, err)
+				}
+				mu.Lock()
+				if !reflect.DeepEqual(wrappedSequence, nativeSequence) {
+					t.Errorf("header order wrapped=%v native=%v", wrappedSequence, nativeSequence)
+				}
+				sequence := slices.Clone(wrappedSequence)
+				mu.Unlock()
+				hops := 0
+				for len(sequence) > 0 {
+					end := slices.Index(sequence, "end")
+					if end < 0 {
+						t.Fatal("incomplete header trace", sequence)
+					}
+					fields := sequence[:end]
+					sequence = sequence[end+1:]
+					hops++
+					if !h1 {
+						if len(fields) < 4 || (len(tc.pseudo) > 0 && !slices.Equal(fields[:4], tc.pseudo)) {
+							t.Fatalf("pseudo header order=%v want=%v", fields, tc.pseudo)
+						}
+						fields = fields[4:]
+					}
+					if len(tc.ordinary) > 0 {
+						if len(fields) < len(tc.ordinary) {
+							t.Fatal("missing ordinary headers", fields)
+						}
+						for i, name := range tc.ordinary {
+							if !strings.EqualFold(fields[i], name) {
+								t.Fatalf("ordinary order=%v want=%v", fields, tc.ordinary)
+							}
+						}
+					}
+					for _, name := range fields {
+						if name == fhttp.HeaderOrderKey || name == fhttp.PHeaderOrderKey || strings.HasPrefix(name, ":") {
+							t.Fatalf("unexpected control field on wire: %q", name)
+						}
+					}
+				}
+				if hops != 2 {
+					t.Fatalf("trace hops=%d want=2", hops)
+				}
+				if h1 {
+					blocks := make([]string, 4)
+					for i := range blocks {
+						select {
+						case blocks[i] = <-wire:
+						case <-time.After(5 * time.Second):
+							t.Fatal("missing raw HTTP/1.1 headers")
+						}
+					}
+					if !slices.Equal(blocks[:2], blocks[2:]) {
+						t.Fatalf("raw HTTP/1.1 header order differs: native=%v wrapped=%v", blocks[:2], blocks[2:])
+					}
+				}
+				if !strings.Contains(logs.String(), "Header-Source: transport") {
+					t.Fatal(logs.String())
+				}
+			})
+		}
+	}
+}
+
 type headerCaptureListener struct {
 	net.Listener
 	headers chan<- string

@@ -31,6 +31,9 @@ type Request struct {
 	sendCalled    bool
 	responseRead  bool
 	responseLimit int64
+
+	headerOrderSet       bool
+	pseudoHeaderOrderSet bool
 }
 
 // NewRequest 创建默认使用 GET 方法的请求。
@@ -176,6 +179,10 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 	}
 	if r.httpc.transportErr != nil {
 		r.err = r.httpc.transportErr
+		return r
+	}
+	if err := r.validateHeaderOrders(); err != nil {
+		r.err = err
 		return r
 	}
 	if r.host != "" {
