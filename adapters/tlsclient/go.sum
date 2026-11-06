@@ -1,3 +1,5 @@
+github.com/Albert-Zhan/httpc/v2 v2.0.0 h1:V1GLKzgJuvbX5WYJLYS9FUxhkIkfpETBn1zJDBIT4lg=
+github.com/Albert-Zhan/httpc/v2 v2.0.0/go.mod h1:7xGxT4kMmwFNF7JryYjgCbBIGhon6UI6oG5NQwgs/Io=
 github.com/andybalholm/brotli v1.2.7 h1:UgafRPGMam5ySHfRkhthMqOFA6IFoeF3D7mWIDLjG5A=
 github.com/andybalholm/brotli v1.2.7/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/bdandy/go-errors v1.2.2 h1:WdFv/oukjTJCLa79UfkGmwX7ZxONAihKu4V0mLIs11Q=
