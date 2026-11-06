@@ -1,8 +1,8 @@
 {
-  "enabled": false,
+  "enabled": true,
   "module_dir": ".",
   "tag_name": "v2.0.0",
-  "target_commitish": "",
+  "target_commitish": "9d03ba0a3400da3ad6178c2709a752f8c896a5af",
   "name": "v2.0.0",
-  "body": ""
+  "body": "## v2 模块与兼容性\n\n- 核心模块路径为 `github.com/Albert-Zhan/httpc/v2`，最低 Go 版本为 **Go 1.27**，核心及下载器仅依赖标准库。\n- v1 稳定版继续使用 `github.com/Albert-Zhan/httpc`，由 `release/v1` 维护。v1 与 v2 可使用不同别名同时导入，升级 v2 需调整导入路径。\n- 默认 User-Agent 为 `httpc/2.0.0`；显式 UA（包括空值）优先。\n\n## 新增能力\n\n- 新增 `downloader` 子包，支持单线程及分段并行的流式 GET 下载，根据 Range、长度和强 ETag 选择下载方式；支持进度、限额、取消、重试和失败清理，已有目标不覆盖，文件系统须支持硬链接。\n- 新增 `body.NewStreamFormData()`，按需读取本地普通文件，提供准确的 Content-Length 和重放 Reader，支持 307/308 重定向与取消时关闭文件。源文件在发送期间须保持不变。\n- 新增 `NewClientWithDoer`，接入实现标准请求 Do 方法的外部后端；可选 tls-client 后端通过独立模块发布，连接配置由后端管理。\n- 支持 `SetHost`、`SetHeaderRaw`、`AddHeaderRaw`。请求头与伪头排序由支持 fhttp 控制键的外部后端处理，内置标准后端不支持排序。\n- 新增后端默认 UA 策略选项，保留显式 UA，并继续支持 context、调用方 Trace、有界调试预览及空闲连接管理。\n\n## 升级注意\n\n- 移除 v1 已弃用的命名及接口，包括 HttpClient、NewHttpClient、SetUrl、SetCookies 和旧 MIME 常量别名；使用 Client、NewClient、SetURL、SetCookieList 及规范常量。\n- 移除 EndFile 和 ErrSaveFile。GET 文件下载使用 downloader；已有响应或 POST 输出使用 EndTo，Writer 由调用方管理。\n- `body.URL` 不再可比较，不能使用 == 或作为 map 的键。\n- 下载器目标目录须存在，失败时清理临时文件；EndTo 的部分输出及文件清理由调用方处理。\n- 完整替换关系见 [MIGRATING.md](https://github.com/Albert-Zhan/httpc/blob/v2.0.0/MIGRATING.md)，下载策略见 [下载器说明](https://github.com/Albert-Zhan/httpc/blob/v2.0.0/downloader/README.md)。\n\n## 安装\n\n```sh\ngo get github.com/Albert-Zhan/httpc/v2@v2.0.0\n```\n\n保留 v1 的项目可继续安装 `github.com/Albert-Zhan/httpc@v1.6.1`。公开接口、HTTP/1.1、HTTP/2、下载、上传、取消及 Trace 在三平台发布前检查中验证。\n"
 }
