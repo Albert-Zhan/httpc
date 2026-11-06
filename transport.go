@@ -22,7 +22,7 @@ func (t *transportNode) CloseIdleConnections() {
 	}
 }
 
-func (c *HttpClient) closeTransportChain(node *transportNode) {
+func (c *Client) closeTransportChain(node *transportNode) {
 	c.closeMu.Lock()
 	defer c.closeMu.Unlock()
 	c.closing.Store(true)

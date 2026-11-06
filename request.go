@@ -11,7 +11,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/Albert-Zhan/httpc/body"
+	"github.com/Albert-Zhan/httpc/v2/body"
 )
 
 // Request 构建、发送并读取一次 HTTP 请求，不支持并发共享。
@@ -32,8 +32,8 @@ type Request struct {
 	responseRead  bool
 	responseLimit int64
 
-	// 保留切片变量的引用，使发送前的重赋值和追加仍然生效。
-	legacyCookies *[]*http.Cookie
+	headerOrderSet       bool
+	pseudoHeaderOrderSet bool
 }
 
 // NewRequest 创建默认使用 GET 方法的请求。
@@ -66,18 +66,9 @@ func (r *Request) SetURL(rawURL string) *Request {
 	return r
 }
 
-// SetUrl 设置请求的 URL 地址。
-//
-// Deprecated: 请使用 SetURL。此方法在 v1.x 中保留，可能在未来主版本中移除。
-func (r *Request) SetUrl(rawURL string) *Request {
-	return r.SetURL(rawURL)
-}
-
-// SetHost 覆盖 HTTP/1.1 Host 或 HTTP/2 :authority，空字符串恢复使用 URL 主机。
-// host 为主机名或主机名:端口，不含协议、路径、查询或用户信息。
-// 不改变 URL、连接地址或 TLS SNI；CookieJar 的匹配规则由发送后端决定。
-// 应在 Send 前调用。
-// 格式无效时，Send 返回 ErrInvalidRequest。
+// SetHost 设置 HTTP/1.1 Host 或 HTTP/2 :authority，空字符串使用 URL 主机。
+// host 接受主机名或主机名:端口，不改变连接目标或 TLS SNI；自动 Cookie 遵循后端规则。
+// 应在 Send 前设置，格式无效时 Send 返回 ErrInvalidRequest。
 func (r *Request) SetHost(host string) *Request {
 	r.host = host
 	return r
@@ -92,16 +83,37 @@ func (r *Request) SetParam(name, value string) *Request {
 	return r
 }
 
-// SetHeader 设置请求头，覆盖同名头的全部旧值；名称不区分大小写。
+// SetHeader 规范化请求头名称，替换该键的全部值。
 // User-Agent 显式设置为空时禁止发送该头。
 func (r *Request) SetHeader(name, value string) *Request {
 	r.header.Set(name, value)
 	return r
 }
 
-// AddHeader 追加请求头的一个值，保留同名头的已有值；名称不区分大小写。
+// AddHeader 规范化请求头名称，向该键追加一个值。
 func (r *Request) AddHeader(name, value string) *Request {
 	r.header.Add(name, value)
+	return r
+}
+
+// SetHeaderRaw 保留名称写法，替换精确键的全部值，不合并其他大小写的键。
+// 建议用于 tls-client；名称、值和特殊头由后端处理，标准后端行为可能不同。
+// HTTP/2 名称仍为小写；排序使用 SetHeaderOrder 和 SetPseudoHeaderOrder。
+func (r *Request) SetHeaderRaw(name, value string) *Request {
+	if r.header == nil {
+		r.header = make(http.Header)
+	}
+	r.header[name] = []string{value}
+	return r
+}
+
+// AddHeaderRaw 保留名称写法，向精确键追加值。
+// 大小写、协议和后端规则同 [Request.SetHeaderRaw]。
+func (r *Request) AddHeaderRaw(name, value string) *Request {
+	if r.header == nil {
+		r.header = make(http.Header)
+	}
+	r.header[name] = append(r.header[name], value)
 	return r
 }
 
@@ -112,29 +124,15 @@ func (r *Request) SetBasicAuth(username, password string) *Request {
 	return r.SetHeader("Authorization", value)
 }
 
-// SetCookieList 替换 Cookie 列表，复制切片但共享 Cookie 对象。
-// nil 或空列表可清除列表，与 SetCookies 混用时后一次设置生效。
-// 列表含 nil 元素时，Send 返回 ErrInvalidRequest。
-// 发送期间不要修改 Cookie 对象。
+// SetCookieList 替换请求 Cookie，复制切片但共享对象；发送期间不要修改 Cookie 对象。
+// nil 或空列表清空配置，nil 元素在 Send 时返回 ErrInvalidRequest。
 func (r *Request) SetCookieList(cookies []*http.Cookie) *Request {
 	r.cookies = slices.Clone(cookies)
-	r.legacyCookies = nil
 	return r
 }
 
-// SetCookies 设置请求的 Cookie 列表，保留对调用方切片变量的引用。
-// 调用后、Send 前对该变量的赋值或追加仍会影响请求；nil 可清除列表。
-// 列表含 nil 元素时，Send 返回 ErrInvalidRequest。
-//
-// Deprecated: 请使用 SetCookieList。此方法在 v1.x 中保留，可能在未来主版本中移除。
-func (r *Request) SetCookies(cookies *[]*http.Cookie) *Request {
-	r.cookies = nil
-	r.legacyCookies = cookies
-	return r
-}
-
-// SetDebug 设置是否输出发送阶段请求日志，默认关闭；开启后默认不脱敏。
-// 通过 Client.SetDebugOutput 和 Client.AddDebugSensitiveFields 配置输出和脱敏。
+// SetDebug 开启或关闭发送日志，默认关闭，开启后默认不脱敏。
+// 输出与过滤规则通过 [Client.SetDebugOutput] 和 [Client.AddDebugSensitiveFields] 配置。
 func (r *Request) SetDebug(d bool) *Request {
 	r.debug = d
 	return r
@@ -146,18 +144,16 @@ func (r *Request) SetBody(body body.Body) *Request {
 	return r
 }
 
-// SetResponseLimit 设置读取响应正文的最大字节数，按 gzip 解压后的大小计数。
-// 默认不限制，0 或负值取消限制；应在读取响应前设置。
-// 超出限制返回 ErrResponseTooLarge，Writer 或文件中可能保留已写入的部分内容。
+// SetResponseLimit 限制 End 方法读取的解码后字节数，0 或负值表示不限制。
+// 应在读取前设置；超过时返回 ErrResponseTooLarge，输出目标可能留有部分内容。
 func (r *Request) SetResponseLimit(n int64) *Request {
 	r.responseLimit = n
 	return r
 }
 
-// Send 构建并发送请求，可选传入 context 控制取消和超时。
-// 省略 context 时使用 context.Background()。
-// 未显式设置 User-Agent 时使用 DefaultUserAgent。
-// 每个 Request 只能调用一次 Send；重复调用返回 ErrInvalidRequest 并关闭未读取的响应体。
+// Send 构建并发送请求，省略 context 时使用 context.Background()。
+// 缺少 UA 时默认补充 DefaultUserAgent，后端 UA 模式由后端处理。
+// 每个 Request 只能发送一次，重复发送返回 ErrInvalidRequest 并关闭未读取的响应体。
 func (r *Request) Send(ctxs ...context.Context) *Request {
 	if r.sendCalled {
 		if !r.responseRead && r.response != nil && r.response.Body != nil {
@@ -168,12 +164,16 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 		return r
 	}
 	r.sendCalled = true
-	if r.httpc == nil || r.httpc.client == nil {
+	if r.httpc == nil || (r.httpc.client == nil && r.httpc.doer == nil) {
 		r.err = wrapError(ErrInvalidRequest, "send request", fmt.Errorf("client is nil"))
 		return r
 	}
 	if r.httpc.transportErr != nil {
 		r.err = r.httpc.transportErr
+		return r
+	}
+	if err := r.validateHeaderOrders(); err != nil {
+		r.err = err
 		return r
 	}
 	if r.host != "" {
@@ -239,22 +239,33 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 	if r.host != "" {
 		r.request.Host = r.host
 	}
+	if sized, ok := r.data.(interface{ ContentLength() int64 }); ok {
+		length := sized.ContentLength()
+		if length < -1 {
+			if r.request.Body != nil {
+				_ = r.request.Body.Close()
+			}
+			r.err = wrapError(ErrRequestBody, "set request body length", fmt.Errorf("ContentLength must be -1 or nonnegative"))
+			return r
+		}
+		r.request.ContentLength = length
+		if length == 0 && r.request.Body != nil {
+			_ = r.request.Body.Close()
+			r.request.Body = http.NoBody
+		}
+	}
+	if replayable, ok := r.data.(interface{ GetBody() (io.ReadCloser, error) }); ok {
+		r.request.GetBody = replayable.GetBody
+	}
 
 	r.request.Header = r.header.Clone()
 	if r.request.Header == nil {
 		r.request.Header = make(http.Header)
 	}
-	if _, explicit := r.request.Header["User-Agent"]; !explicit {
-		r.request.Header.Set("User-Agent", DefaultUserAgent)
-	}
-	if _, explicit := r.request.Header["Content-Type"]; contentType != "" && !explicit {
+	if _, explicit := headerValuesFold(r.request.Header, "Content-Type"); contentType != "" && !explicit {
 		r.request.Header.Set("Content-Type", contentType)
 	}
-	cookies := r.cookies
-	if r.legacyCookies != nil {
-		cookies = *r.legacyCookies
-	}
-	for i, v := range cookies {
+	for i, v := range r.cookies {
 		if v == nil {
 			if r.request.Body != nil {
 				_ = r.request.Body.Close()
@@ -265,22 +276,22 @@ func (r *Request) Send(ctxs ...context.Context) *Request {
 		r.request.AddCookie(v)
 	}
 
-	client := r.httpc.client
-	if r.debug && r.httpc.debugEnabled() {
-		// 请求私有的客户端副本共享连接池、Jar 和策略，避免修改并发使用的客户端。
-		traced := *client
-		traced.Transport = &debugTransport{next: client.Transport, client: r.httpc, id: debugRequestID.Add(1)}
-		client = &traced
-	}
-	r.response, r.err = client.Do(r.request)
-	if r.err != nil {
-		r.err = wrapError(ErrSendRequest, "send request", r.err)
-		return r
-	}
+	r.response, r.err = r.httpc.do(r.request, r.debug)
 	return r
 }
 
-// Host 是 authority，不接受完整 URL 或可分隔请求头的字符。
+// headerValuesFold 查找同名头，保留原始键名和显式空值。
+func headerValuesFold(headers http.Header, name string) (values []string, present bool) {
+	for key, items := range headers {
+		if strings.EqualFold(key, name) {
+			values = append(values, items...)
+			present = true
+		}
+	}
+	return values, present
+}
+
+// Host 仅接受 authority，不接受完整 URL 或请求头分隔字符。
 func validateRequestHost(host string) error {
 	if strings.HasSuffix(host, ":") || strings.ContainsAny(host, "/\\?#@") || strings.IndexFunc(host, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0 {
 		return fmt.Errorf("host must be a hostname or hostname:port")

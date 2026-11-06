@@ -9,14 +9,12 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestResponseLimitAcrossReadMethods(t *testing.T) {
-	for _, method := range []string{"End", "EndByte", "EndTo", "EndFile"} {
+	for _, method := range []string{"End", "EndByte", "EndTo"} {
 		for _, encoding := range []string{"plain", "gzip"} {
 			for _, tc := range []struct {
 				name, content string
@@ -58,20 +56,9 @@ func TestResponseLimitAcrossReadMethods(t *testing.T) {
 					case "EndTo":
 						resp, err = req.EndTo(&dst)
 						got = dst.Bytes()
-					case "EndFile":
-						dir := t.TempDir()
-						resp, err = req.EndFile(dir, "data")
-						var fileErr error
-						got, fileErr = os.ReadFile(filepath.Join(dir, "data"))
-						if fileErr != nil {
-							t.Fatal(fileErr)
-						}
 					}
 					if tc.exceeds {
 						assertError(t, err, ErrResponseTooLarge, nil)
-						if method == "EndFile" && !errors.Is(err, ErrSaveFile) {
-							t.Fatal("download lost save-file classification")
-						}
 						if method == "End" || method == "EndByte" {
 							if len(got) != 0 {
 								t.Fatal("buffered methods returned partial success data")
@@ -125,7 +112,7 @@ func TestGzipResponseStreamingAndLimit(t *testing.T) {
 	defer server.Close()
 	client := NewClient()
 	t.Cleanup(client.CloseIdleConnections)
-	for _, method := range []string{"EndByte", "EndTo", "EndFile"} {
+	for _, method := range []string{"EndByte", "EndTo"} {
 		for _, explicit := range []bool{false, true} {
 			for _, limited := range []bool{false, true} {
 				t.Run(fmt.Sprintf("%s/explicit=%v/limited=%v", method, explicit, limited), func(t *testing.T) {
@@ -147,14 +134,6 @@ func TestGzipResponseStreamingAndLimit(t *testing.T) {
 						dst.Write(data)
 					case "EndTo":
 						resp, err = req.EndTo(&dst)
-					case "EndFile":
-						dir := t.TempDir()
-						resp, err = req.EndFile(dir, "data")
-						data, fileErr := os.ReadFile(filepath.Join(dir, "data"))
-						if fileErr != nil {
-							t.Fatal(fileErr)
-						}
-						dst.Write(data)
 					}
 					if limited {
 						assertError(t, err, ErrResponseTooLarge, nil)

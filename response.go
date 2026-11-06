@@ -6,9 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -28,8 +25,7 @@ func (r *Request) beginRead(op string) error {
 	return nil
 }
 
-// End 读取已发送请求的响应正文并关闭响应体，返回字符串。
-// 4xx 和 5xx 状态码不会自动视为错误。
+// End 读取并关闭响应正文，返回字符串；解码及状态码规则同 [Request.EndByte]。
 func (r *Request) End() (*http.Response, string, error) {
 	resp, bodyByte, err := r.EndByte()
 	if err != nil {
@@ -38,8 +34,8 @@ func (r *Request) End() (*http.Response, string, error) {
 	return resp, string(bodyByte), nil
 }
 
-// EndByte 读取已发送请求的响应正文并关闭响应体，返回字节并支持 gzip 解码。
-// 4xx 和 5xx 状态码不会自动视为错误。
+// EndByte 读取并关闭响应正文，返回字节，支持 gzip 解码和 SetResponseLimit。
+// 响应只能读取一次；4xx/5xx 本身不产生错误。
 func (r *Request) EndByte() (*http.Response, []byte, error) {
 	if err := r.beginRead("read response"); err != nil {
 		return nil, nil, err
@@ -54,9 +50,8 @@ func (r *Request) EndByte() (*http.Response, []byte, error) {
 	return r.response, buffer.Bytes(), nil
 }
 
-// EndTo 将响应正文流式写入 dst 并关闭响应体，支持 gzip 解码。
-// dst 由调用方管理，此方法不关闭它；失败时可能已写入部分内容。
-// 4xx 和 5xx 状态码不会自动视为错误。此方法与其他 End 方法共享一次读取状态。
+// EndTo 将正文流式写入 dst 并关闭响应体，读取规则同 [Request.EndByte]。
+// dst 由调用方关闭，失败时可能留有部分内容；与其他 End 方法共用一次读取状态。
 func (r *Request) EndTo(dst io.Writer) (*http.Response, error) {
 	if err := r.beginRead("write response"); err != nil {
 		return nil, err
@@ -68,59 +63,6 @@ func (r *Request) EndTo(dst io.Writer) (*http.Response, error) {
 	}
 	_, r.err = r.copyResponse(dst)
 	return r.response, r.err
-}
-
-// EndFile 将已发送请求的响应保存为文件并关闭响应体，支持 gzip 解码，仅接受 200 OK。
-// savePath 目录须已存在，已有文件会被覆盖；saveFileName 为空时从 URL 获取文件名。
-//
-// Deprecated: 此方法在 v1.x 中保留，v2 已移除。v1 可使用 EndTo(io.Writer)；
-// 升级 v2 后，文件下载建议使用 downloader，已发送的响应使用 EndTo(io.Writer)。
-func (r *Request) EndFile(savePath, saveFileName string) (resp *http.Response, err error) {
-	if err := r.beginRead("save response file"); err != nil {
-		return nil, err
-	}
-
-	defer func() {
-		_ = r.response.Body.Close()
-	}()
-
-	if r.response.StatusCode != http.StatusOK {
-		r.err = wrapError(ErrHTTPStatus, "save response file", fmt.Errorf("server responded with HTTP %d", r.response.StatusCode))
-		return r.response, r.err
-	}
-
-	if saveFileName == "" {
-		u, err := url.Parse(r.request.URL.String())
-		if err == nil {
-			parts := strings.Split(strings.Trim(u.Path, "/"), "/")
-			if len(parts) > 0 {
-				saveFileName = parts[len(parts)-1]
-			}
-		}
-		if saveFileName == "" {
-			saveFileName = "download.tmp"
-		}
-	}
-
-	destPath := filepath.Join(savePath, saveFileName)
-	file, err := os.Create(destPath)
-	if err != nil {
-		r.err = wrapError(ErrSaveFile, "create download file", err)
-		return r.response, r.err
-	}
-	defer func() {
-		if closeErr := file.Close(); err == nil && closeErr != nil {
-			r.err = wrapError(ErrSaveFile, "close download file", closeErr)
-			err = r.err
-		}
-	}()
-	_, err = r.copyResponse(file)
-	if err != nil {
-		r.err = wrapError(ErrSaveFile, "write download file", err)
-		return r.response, r.err
-	}
-
-	return r.response, nil
 }
 
 // copyResponse 流式复制解码后的正文，调用方负责响应体和目标的关闭。

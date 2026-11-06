@@ -11,7 +11,7 @@
 /build/
 /dist/
 /coverage/
-/coverage.out
+**/coverage.out
 /coverage.html
 /coverage-*.out
 

@@ -1,8 +1,8 @@
 {
-  "enabled": true,
+  "enabled": false,
   "module_dir": ".",
-  "tag_name": "v1.6.1",
-  "target_commitish": "a53ba81deb0b63372a1ced608da3c8913b348b99",
-  "name": "v1.6.1",
-  "body": "## 更新内容\n\n- 新增 `Request.SetHost(host)`，可设置 HTTP/1.1 Host 或 HTTP/2 `:authority`，空字符串恢复 URL 主机；与 SetURL 的调用顺序无关。\n- SetHost 不改变连接目标或 TLS SNI；主机格式无效时返回 `ErrInvalidRequest`。Go 1.27 标准后端的自动 Cookie 按覆盖后的 Host 匹配，调试日志可记录实际发送的 Host。\n- 为 `EndFile` 添加标准 `Deprecated:` 提示。该方法在 v1.x 中继续保留，可使用 `EndTo(io.Writer)` 管理文件输出；升级 v2 后可使用下载器。\n- 完善 v1 维护分支及多模块发布校验，macOS CI 使用 Intel runner，并保留三平台构建、静态检查和竞态测试。\n\n## 升级说明\n\n- 保持 `github.com/Albert-Zhan/httpc` 模块路径及现有 v1 API，最低 Go 版本仍为 **Go 1.27**，无第三方依赖。\n- 默认 User-Agent 更新为 `httpc/1.6.1`；显式设置的 UA（包括空值）保持原有行为。\n- EndFile 的行为没有移除；弃用提示便于提前迁移调用代码。\n\n## 安装\n\n```sh\ngo get github.com/Albert-Zhan/httpc@v1.6.1\n```\n\n完整变更：https://github.com/Albert-Zhan/httpc/compare/v1.6.0...v1.6.1\n"
+  "tag_name": "v2.0.0",
+  "target_commitish": "",
+  "name": "v2.0.0",
+  "body": ""
 }

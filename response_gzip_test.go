@@ -9,8 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -75,7 +73,7 @@ func TestAutomaticGzipDecodeError(t *testing.T) {
 }
 
 func TestResponseDecodingErrorsAndEncodingBoundaries(t *testing.T) {
-	for _, method := range []string{"EndByte", "EndTo", "EndFile"} {
+	for _, method := range []string{"EndByte", "EndTo"} {
 		for _, encoding := range []string{"gzip", " GZIP "} {
 			t.Run(method+"/"+encoding, func(t *testing.T) {
 				req, source := responseRequest(t, strings.NewReader("invalid gzip header"), encoding)
@@ -85,8 +83,6 @@ func TestResponseDecodingErrorsAndEncodingBoundaries(t *testing.T) {
 					_, _, err = req.EndByte()
 				case "EndTo":
 					_, err = req.EndTo(io.Discard)
-				case "EndFile":
-					_, err = req.EndFile(t.TempDir(), "data")
 				}
 				assertError(t, err, ErrDecodeResponse, gzip.ErrHeader)
 				if source.closes != 1 {
@@ -164,7 +160,7 @@ func TestEmptyGzipResponses(t *testing.T) {
 				{"/missing", "GET", 200, true},
 			} {
 				for _, explicit := range []bool{false, true} {
-					for _, method := range []string{"End", "EndByte", "EndTo", "EndFile"} {
+					for _, method := range []string{"End", "EndByte", "EndTo"} {
 						t.Run(fmt.Sprintf("%s%s/explicit=%v", method, tc.path, explicit), func(t *testing.T) {
 							req := NewRequest(client).SetURL(server.URL + tc.path).SetMethod(tc.method).SetResponseLimit(1)
 							if explicit {
@@ -188,24 +184,8 @@ func TestEmptyGzipResponses(t *testing.T) {
 								if dst.closes != 0 {
 									t.Fatal("writer was closed")
 								}
-							case "EndFile":
-								dir := t.TempDir()
-								resp, err = req.EndFile(dir, "data")
-								var fileErr error
-								content, fileErr = os.ReadFile(filepath.Join(dir, "data"))
-								if tc.status == 200 && fileErr != nil {
-									t.Fatal(fileErr)
-								}
-								if tc.status != 200 && !os.IsNotExist(fileErr) {
-									t.Fatal("non-200 response created a file")
-								}
 							}
 							switch {
-							case method == "EndFile" && tc.status != 200:
-								assertError(t, err, ErrHTTPStatus, nil)
-								if errors.Is(err, ErrDecodeResponse) {
-									t.Fatal("empty error response was decoded before checking download status")
-								}
 							case tc.truncated:
 								assertError(t, err, ErrDecodeResponse, io.ErrUnexpectedEOF)
 							case err != nil:
