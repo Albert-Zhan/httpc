@@ -68,16 +68,14 @@ func (r *Request) SetURL(rawURL string) *Request {
 
 // SetUrl 设置请求的 URL 地址。
 //
-// Deprecated: 请使用 SetURL。此方法在 v1.x 中保留，可能在未来主版本中移除。
+// Deprecated: 请使用 [Request.SetURL]。v1.x 继续保留。
 func (r *Request) SetUrl(rawURL string) *Request {
 	return r.SetURL(rawURL)
 }
 
-// SetHost 覆盖 HTTP/1.1 Host 或 HTTP/2 :authority，空字符串恢复使用 URL 主机。
-// host 为主机名或主机名:端口，不含协议、路径、查询或用户信息。
-// 不改变 URL、连接地址或 TLS SNI；CookieJar 的匹配规则由发送后端决定。
-// 应在 Send 前调用。
-// 格式无效时，Send 返回 ErrInvalidRequest。
+// SetHost 设置 HTTP/1.1 Host 或 HTTP/2 :authority，空字符串使用 URL 主机。
+// host 接受主机名或主机名:端口，不改变连接目标或 TLS SNI。
+// 应在 Send 前设置，格式无效时 Send 返回 ErrInvalidRequest。
 func (r *Request) SetHost(host string) *Request {
 	r.host = host
 	return r
@@ -92,14 +90,14 @@ func (r *Request) SetParam(name, value string) *Request {
 	return r
 }
 
-// SetHeader 设置请求头，覆盖同名头的全部旧值；名称不区分大小写。
+// SetHeader 规范化请求头名称，替换该键的全部值。
 // User-Agent 显式设置为空时禁止发送该头。
 func (r *Request) SetHeader(name, value string) *Request {
 	r.header.Set(name, value)
 	return r
 }
 
-// AddHeader 追加请求头的一个值，保留同名头的已有值；名称不区分大小写。
+// AddHeader 规范化请求头名称，向该键追加一个值。
 func (r *Request) AddHeader(name, value string) *Request {
 	r.header.Add(name, value)
 	return r
@@ -126,15 +124,15 @@ func (r *Request) SetCookieList(cookies []*http.Cookie) *Request {
 // 调用后、Send 前对该变量的赋值或追加仍会影响请求；nil 可清除列表。
 // 列表含 nil 元素时，Send 返回 ErrInvalidRequest。
 //
-// Deprecated: 请使用 SetCookieList。此方法在 v1.x 中保留，可能在未来主版本中移除。
+// Deprecated: 请使用 [Request.SetCookieList]。v1.x 继续保留。
 func (r *Request) SetCookies(cookies *[]*http.Cookie) *Request {
 	r.cookies = nil
 	r.legacyCookies = cookies
 	return r
 }
 
-// SetDebug 设置是否输出发送阶段请求日志，默认关闭；开启后默认不脱敏。
-// 通过 Client.SetDebugOutput 和 Client.AddDebugSensitiveFields 配置输出和脱敏。
+// SetDebug 开启或关闭发送日志，默认关闭，开启后默认不脱敏。
+// 输出与过滤规则通过 [Client.SetDebugOutput] 和 [Client.AddDebugSensitiveFields] 配置。
 func (r *Request) SetDebug(d bool) *Request {
 	r.debug = d
 	return r
@@ -146,18 +144,16 @@ func (r *Request) SetBody(body body.Body) *Request {
 	return r
 }
 
-// SetResponseLimit 设置读取响应正文的最大字节数，按 gzip 解压后的大小计数。
-// 默认不限制，0 或负值取消限制；应在读取响应前设置。
-// 超出限制返回 ErrResponseTooLarge，Writer 或文件中可能保留已写入的部分内容。
+// SetResponseLimit 限制 End 方法读取的解码后字节数，0 或负值表示不限制。
+// 应在读取前设置；超过时返回 ErrResponseTooLarge，输出目标可能留有部分内容。
 func (r *Request) SetResponseLimit(n int64) *Request {
 	r.responseLimit = n
 	return r
 }
 
-// Send 构建并发送请求，可选传入 context 控制取消和超时。
-// 省略 context 时使用 context.Background()。
-// 未显式设置 User-Agent 时使用 DefaultUserAgent。
-// 每个 Request 只能调用一次 Send；重复调用返回 ErrInvalidRequest 并关闭未读取的响应体。
+// Send 构建并发送请求，省略 context 时使用 context.Background()。
+// 缺少 User-Agent 时补充 DefaultUserAgent；每个 Request 只能发送一次。
+// 重复发送返回 ErrInvalidRequest 并关闭未读取的响应体。
 func (r *Request) Send(ctxs ...context.Context) *Request {
 	if r.sendCalled {
 		if !r.responseRead && r.response != nil && r.response.Body != nil {

@@ -8,7 +8,7 @@ import (
 
 // Url 构建 application/x-www-form-urlencoded 正文。
 //
-// Deprecated: 请使用 URL。此名称在 v1.x 中保留，可能在未来主版本中移除。
+// Deprecated: 请使用 [URL]。v1.x 继续保留。
 type Url struct {
 	// 指针使表单值保持可比较，并在按值复制后共享数据。
 	data *url.Values
@@ -26,7 +26,7 @@ func NewURLEncode() *URL {
 
 // NewUrlEncode 创建用于构建 URL-encoded 表单数据的请求体。
 //
-// Deprecated: 请使用 NewURLEncode。此函数在 v1.x 中保留，可能在未来主版本中移除。
+// Deprecated: 请使用 [NewURLEncode]。v1.x 继续保留。
 func NewUrlEncode() *URL {
 	return NewURLEncode()
 }

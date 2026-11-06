@@ -4,11 +4,11 @@
 
 | 分支 | 职责 |
 | --- | --- |
-| `master` | 当前稳定 v1；v2 正式发布前继续保留 v1 模块 |
+| `master` | v2 核心及可选适配器的稳定版本 |
 | `release/v1` | v1 兼容维护和补丁发布 |
 | `dev/v2` | v2 功能开发，只允许发布 alpha、beta、rc 预发布 |
 
-v2 使用同一仓库的根模块 `github.com/Albert-Zhan/httpc/v2`，可选 tls-client 适配器使用独立子模块。v2 实现与本地双模块开发方式见 [开发分支说明](https://github.com/Albert-Zhan/httpc/blob/dev/v2/CONTRIBUTING.md)。正式就绪后再合入 master，不新建仓库，也不修改旧版本标签。
+本文用于 v1 维护，模块路径为 `github.com/Albert-Zhan/httpc`。v2 的双模块开发和发布规则见 [v2 开发说明](https://github.com/Albert-Zhan/httpc/blob/master/CONTRIBUTING.md)。
 
 ## 本地检查
 
@@ -22,7 +22,7 @@ go test -race -count=1 -timeout=5m -covermode=atomic -coverprofile=coverage.out 
 go tool cover -func=coverage.out
 ```
 
-竞态检查需要启用 CGO 并安装 C 编译器。GitHub 托管 runner 已提供相应环境。文本文件通过 `.gitattributes` 统一使用 LF 换行；CI 在检出历史提交时也关闭自动 CRLF 转换。
+竞态检查需要启用 CGO 并安装 C 编译器，GitHub 托管 runner 已提供。文本文件通过 `.gitattributes` 统一使用 LF 换行，CI 关闭自动 CRLF 转换。
 
 修复缺陷时添加能复现问题的回归测试；新增公共 API 时覆盖正常行为和关键错误路径。测试优先使用 `httptest`、本地临时文件或自定义 Transport，避免依赖公网服务、真实凭据和固定等待时间。
 
@@ -69,19 +69,15 @@ python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 
 ## 发布流程
 
-发布通过 `.github/workflows/release.yml` 完成。v1 补丁在 `release/v1` 准备，v2 开发分支只允许预发布，正式 v2 从 master 发布。
+v1 补丁在 `release/v1` 准备，通过 `.github/workflows/release.yml` 发布：
 
-1. 更新待发布模块的 `version.go` 的 Version，不带 v 前缀；v1 使用稳定版本如 1.6.1。同步文档并提交，通过 CI 后记录完整 SHA。
+1. 更新 `version.go` 的 Version，不带 v 前缀，例如 1.6.2。同步文档并提交，通过 CI 后记录完整 SHA。
 2. 在对应分支修改 `.github/release.json`，填写 `enabled: true`、`module_dir: "."`、`tag_name`、`target_commitish`、`name`、`body`。目标 SHA 必须是配置提交的祖先。
 3. 推送发布配置自动触发，也可手动运行 Publish release。流程校验目标提交的 Version、go.mod 模块路径及标签一致，再对该提交执行三平台检查。
 4. 全部通过后创建 Release。已有标签不可移动；重复运行只核对已有版本，不覆盖更新说明。
 
-v1 标签为 `v1.x.y`，模块路径不加 /v1。核心 v2 标签为 `v2.x.y`，模块路径必须加 /v2。预发布只接受 alpha.N、beta.N、rc.N，不接受 -dev。适配器使用 `adapters/tlsclient/v2.x.y` 标签，须先发布其 go.mod 依赖的核心版本，且通过无 workspace 的检查。
+v1 标签为 `v1.x.y`，模块路径不加 /v1；`release/v1` 只发布 v1 稳定版，不能发布预发布或其他模块。
 
-预发布自动标记为 Prerelease。适配器与预发布不设为 Latest；核心稳定版本不低于已发布核心稳定版本时才设为 Latest，v2 发布后的 v1 补丁不会取代 Latest。
+只有不低于已发布核心稳定版本的版本才设为 GitHub Latest，因此 v1 补丁不会取代 v2 的 Latest 标记。Go 的 `github.com/Albert-Zhan/httpc@latest` 仍按 v1 模块路径选择版本。
 
 普通功能提交不创建 Release。开发中的发布配置可设 `enabled: false`；重新启用时填写准确版本和目标提交。检查任务只有读取权限，只有最终发布任务拥有内容写入权限。
-
-```sh
-python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
-```

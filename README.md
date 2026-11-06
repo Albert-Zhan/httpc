@@ -1,18 +1,22 @@
-# httpc
+# httpc v1
 
-[![CI](https://github.com/Albert-Zhan/httpc/actions/workflows/ci.yml/badge.svg)](https://github.com/Albert-Zhan/httpc/actions/workflows/ci.yml)
+[![CI](https://github.com/Albert-Zhan/httpc/actions/workflows/ci.yml/badge.svg?branch=release%2Fv1)](https://github.com/Albert-Zhan/httpc/actions/workflows/ci.yml)
 [![Go Reference](https://pkg.go.dev/badge/github.com/Albert-Zhan/httpc.svg)](https://pkg.go.dev/github.com/Albert-Zhan/httpc)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
 httpc 是基于 Go 标准库的链式 HTTP 客户端，支持请求构建、表单与文件传输、Cookie 管理、Transport 扩展和发送阶段调试，无第三方依赖。
 
-需要 **Go 1.27 或更新版本**。本文对应 v1.6.1：
+需要 **Go 1.27+**。本文对应 v1.6.1，由 `release/v1` 分支维护：
 
 ```sh
 go get github.com/Albert-Zhan/httpc@v1.6.1
 ```
 
-[API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc) · [发布版本](https://github.com/Albert-Zhan/httpc/releases) · [开发与发布规范](CONTRIBUTING.md)
+将版本换成 `@latest` 可更新到 v1 稳定版，导入路径保持 `github.com/Albert-Zhan/httpc`。`master` 维护使用 `/v2` 路径的 v2，接入方式见 [v2 文档](https://github.com/Albert-Zhan/httpc/blob/master/README.md)。
+
+v1.x 保留 HttpClient、NewHttpClient、SetUrl、SetCookies 等兼容入口；新代码可使用本文中的规范名称。升级 v2 的替换关系见 [迁移说明](https://github.com/Albert-Zhan/httpc/blob/master/MIGRATING.md)。
+
+[API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc) · [v1.6.1 发布说明](https://github.com/Albert-Zhan/httpc/releases/tag/v1.6.1) · [开发与发布规范](CONTRIBUTING.md)
 
 ## 快速开始
 
@@ -80,9 +84,7 @@ fmt.Println(resp.StatusCode, text)
 
 未设置 User-Agent 时使用 `httpc/` 加 `httpc.Version`，即 `httpc.DefaultUserAgent`；HTTP/1.1 和 HTTP/2 一致。自定义值优先，`SetHeader("User-Agent", "")` 可禁止发送该头。
 
-`SetHost("api.example.com:8443")` 只改变请求声明的主机，不改变 URL 的连接目标或 TLS SNI。它接受主机名或主机名:端口；格式无效时 Send 返回 ErrInvalidRequest。`SetHeader("Host", ...)` 不能替代它。SetHost 与 SetURL 的调用顺序无关；清除覆盖可调用 `SetHost("")`。
-
-Go 1.27 标准后端的自动 Cookie 按覆盖后的 Host 匹配。
+`SetHost` 接受主机名或主机名:端口，空字符串恢复 URL 主机，与 SetURL 的调用顺序无关。它不改变连接目标或 TLS SNI，不能用 `SetHeader("Host", ...)` 替代；格式无效时 Send 返回 `ErrInvalidRequest`。
 
 ## 请求体与上传
 
@@ -132,7 +134,7 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-文件须提前存在。可在添加内容前用 `SetBoundary` 指定边界。Form 保留构建或编码时的第一个错误，可通过 `data.Err()` 检查，`Send()` 也会检查并阻止发送；`Encode()` 完成构建后不能再添加字段或文件。
+Form 在 SetFile 时读取整个文件并缓存在内存中，文件须提前存在。自定义边界使用 SetBoundary，并在添加内容前设置。构建错误可通过 `Err()` 检查，Send 也会检查并阻止发送；Encode 后不能再添加内容。
 
 自定义正文只需实现 `body.Body` 的两个方法：`GetContentType() string`、`Encode() io.Reader`。可额外实现 `Err() error`，httpc 会在编码前后检查它。
 
@@ -168,21 +170,33 @@ fmt.Printf("status=%d sha256=%x\n", resp.StatusCode, hash.Sum(nil))
 
 失败时，`End`、`EndByte` 不返回部分正文；Writer 或文件可能保留已写入内容，调用方根据错误决定是否使用或清理。Writer 写入失败返回 `ErrWriteResponse`，原始错误链保留。
 
-### 下载文件
+### 保存文件
 
 ```go
-resp, err := httpc.NewRequest(client).
-	SetURL("https://example.com/archive.zip").Send().EndFile("./downloads", "archive.zip")
+file, err := os.Create("./downloads/archive.zip")
 if err != nil {
+	fmt.Println(err)
+	return
+}
+defer file.Close()
+resp, err := httpc.NewRequest(client).
+	SetURL("https://example.com/archive.zip").Send().EndTo(file)
+if err != nil {
+	fmt.Println(err)
+	return
+}
+if err = file.Close(); err != nil {
 	fmt.Println(err)
 	return
 }
 fmt.Println(resp.StatusCode)
 ```
 
-`EndFile` 已标记 Deprecated，在 v1.x 中保留；v2 已移除。v1 的通用流式输出可使用 `EndTo(io.Writer)`，升级 v2 后文件下载建议使用独立的 downloader。替换方式与行为差异见 [v2 迁移说明](https://github.com/Albert-Zhan/httpc/blob/dev/v2/MIGRATING.md)。
+上例使用 os.Create，目录须存在，已有文件会被覆盖；EndTo 也会写入 4xx/5xx 正文，业务上仍需判断状态码。失败时的部分文件由调用方清理。
 
-目录须已存在，目标文件存在时会被覆盖；文件名为空时从请求 URL 获取。下载收到非 200 状态码返回 `ErrHTTPStatus`；文件创建、写入、关闭，以及下载中的读取或超限错误可匹配 `ErrSaveFile`。
+`EndFile(dir, name)` 作为弃用接口继续保留在 v1.x 中，仅接受 200 OK，目录须存在，已有目标会被覆盖；name 为空时从 URL 推导。非 200 响应返回 `ErrHTTPStatus`，保存、读取或超限错误可匹配 `ErrSaveFile`。升级 v2 后的下载器用法和行为差异见 [迁移说明](https://github.com/Albert-Zhan/httpc/blob/master/MIGRATING.md#用下载器替代-endfile)。
+
+### 解码与读取状态
 
 所有 End 方法支持单一的 `Content-Encoding: gzip`，包括显式请求 gzip 的情况；返回的响应头保留 Transport 提供的值。仅有 `application/gzip` MIME 类型或 `.gz` 文件名不会触发解包，其他编码或编码组合按原始正文读取。gzip 头配空正文按空正文处理并保留状态码；非空数据截断、损坏或校验失败仍返回 `ErrDecodeResponse`。
 
@@ -202,7 +216,7 @@ if err != nil {
 fmt.Println(resp.StatusCode, text)
 ```
 
-自动 Cookie 管理默认关闭。`SetCookieJar` 可接收标准库或其他 `http.CookieJar` 实现，`httpc.NewCookieJar()` 是创建标准库 Jar 的便捷入口；设为 nil 可禁用。配置后，共享客户端的请求会自动保存响应 Cookie，并发送与 URL 匹配的 Cookie。
+自动 Cookie 管理默认关闭。SetCookieJar 接收 `http.CookieJar` 实现，`NewCookieJar()` 是标准库 Jar 的便捷入口，nil 可禁用。Jar 自动保存响应 Cookie 并选择匹配项；Go 1.27 按请求 Host（含 SetHost 覆盖）、路径等规则匹配。
 
 `SetCookieList` 设置当前请求的 Cookie，复制切片但共享 Cookie 对象；nil 或空列表可清除列表，列表元素不能为 nil。手动 Cookie 头与列表一起发送；发送期间不要修改共享的 Cookie 对象。
 
@@ -301,7 +315,7 @@ if err != nil {
 - 只匹配显式指定的 key，忽略大小写和分隔符，`token` 不匹配 `access_token`。可多次调用追加规则。
 - 规则覆盖请求头、查询参数、JSON（递归）和表单字段。`Cookie` 隐藏所有 Cookie 值，指定 Cookie 名称只隐藏对应项；`filename` 用于 multipart 文件名。
 - `Referer` 等 URL 字段可用 `username`、`password`、`userinfo`、`fragment` 控制对应部分。HTTP/2 的 `:path` 同样过滤查询参数，指定 `Host` 也会过滤 `:authority`。
-- 正文仅预览不超过 64 KiB 的可重放副本；过大、不可重放或非 UTF-8 正文省略。multipart 只展示字段和文件名。启用脱敏后，无法解析或不支持字段过滤的正文省略。
+- 可重放正文的预览上限为 64 KiB，过大或不可重放时省略；multipart 只展示字段和文件名，其他正文在不是有效 UTF-8 时省略。配置脱敏后，无法解析或不支持字段过滤的正文也会省略。
 
 一次 HTTP/1.1 请求的日志示例：
 

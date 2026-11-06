@@ -18,7 +18,7 @@ import (
 
 // HttpClient 提供 HTTP 客户端配置和连接管理。
 //
-// Deprecated: 请使用 Client。此名称在 v1.x 中保留，可能在未来主版本中移除。
+// Deprecated: 请使用 [Client]。v1.x 继续保留。
 type HttpClient struct {
 	client       *http.Client
 	transport    *http.Transport
@@ -62,7 +62,7 @@ func NewClient() *Client {
 
 // NewHttpClient 创建并返回一个默认配置的客户端。
 //
-// Deprecated: 请使用 NewClient。此函数在 v1.x 中保留，可能在未来主版本中移除。
+// Deprecated: 请使用 [NewClient]。v1.x 继续保留。
 func NewHttpClient() *Client {
 	return NewClient()
 }

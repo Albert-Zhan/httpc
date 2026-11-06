@@ -13,7 +13,7 @@ var (
 	ErrInvalidProxy = errors.New("httpc: invalid proxy")
 	// ErrRequestBody 表示请求体构建或编码失败。
 	ErrRequestBody = body.ErrRequestBody
-	// ErrUploadFile 表示上传文件打开、读取或写入表单失败。
+	// ErrUploadFile 表示上传文件处理失败。
 	ErrUploadFile = body.ErrUploadFile
 	// ErrSendRequest 表示发送请求失败，包括连接、代理、TLS、取消和超时错误。
 	ErrSendRequest = errors.New("httpc: send request failed")
@@ -25,9 +25,9 @@ var (
 	ErrResponseTooLarge = errors.New("httpc: response body too large")
 	// ErrDecodeResponse 表示 gzip 响应解压失败。
 	ErrDecodeResponse = errors.New("httpc: decode response failed")
-	// ErrSaveFile 表示下载文件创建、写入或关闭失败。
+	// ErrSaveFile 表示 EndFile 保存失败，可与读取、解码或限额错误同时匹配。
 	ErrSaveFile = errors.New("httpc: save file failed")
-	// ErrHTTPStatus 表示下载接口返回了非 200 状态码。
+	// ErrHTTPStatus 表示 EndFile 收到非 200 状态码。
 	// End、EndByte 和 EndTo 不会因 HTTP 状态码而返回此错误。
 	ErrHTTPStatus = errors.New("httpc: unexpected HTTP status")
 )

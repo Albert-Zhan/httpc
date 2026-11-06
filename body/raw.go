@@ -22,21 +22,21 @@ const (
 
 	// Json 表示 JSON 的 MIME 类型。
 	//
-	// Deprecated: 请使用 JSON。此名称在 v1.x 中保留，可能在未来主版本中移除。
+	// Deprecated: 请使用 [JSON]。v1.x 继续保留。
 	Json = JSON
 	// Html 表示 HTML 的 MIME 类型。
 	//
-	// Deprecated: 请使用 HTML。此名称在 v1.x 中保留，可能在未来主版本中移除。
+	// Deprecated: 请使用 [HTML]。v1.x 继续保留。
 	Html = HTML
 	// Xml 表示 XML 的 MIME 类型。
 	//
-	// Deprecated: 请使用 XML。此名称在 v1.x 中保留，可能在未来主版本中移除。
+	// Deprecated: 请使用 [XML]。v1.x 继续保留。
 	Xml = XML
 )
 
 // Raw 构建指定 MIME 类型的文本或二进制正文，不支持并发修改。
 type Raw struct {
-	// string 保存任意字节的不可变快照，并保持 Raw 值可比较。
+	// 不可变字节快照使 Raw 值保持可比较。
 	data   string
 	format string
 	err    error
