@@ -132,7 +132,7 @@ func (r *Request) SetCookies(cookies *[]*http.Cookie) *Request {
 }
 
 // SetDebug 开启或关闭发送日志，默认关闭，开启后默认不脱敏。
-// 输出与过滤规则通过 [Client.SetDebugOutput] 和 [Client.AddDebugSensitiveFields] 配置。
+// 输出与过滤规则通过客户端的 SetDebugOutput 和 AddDebugSensitiveFields 配置。
 func (r *Request) SetDebug(d bool) *Request {
 	r.debug = d
 	return r
