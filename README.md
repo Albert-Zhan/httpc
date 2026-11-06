@@ -6,15 +6,17 @@
 
 httpc 是轻量的链式 HTTP 客户端，支持请求构建、流式输出、Cookie、Transport 扩展和请求调试。核心仅依赖 Go 标准库；[下载器](downloader/README.md) 位于核心子包，[tls-client 后端](adapters/tlsclient/README.md) 通过独立模块接入。
 
-需要 **Go 1.27+**。本文对应 v2.0.0；v1 与 v2 使用不同的模块路径，可分别安装和更新：
+需要 **Go 1.27+**。本文对应 v2.0.0，`master` 维护 v2 稳定版本。各模块分别安装和更新：
 
-| 版本 / 模块 | 安装命令 | 导入路径 |
-| --- | --- | --- |
-| v1 稳定版 | `go get github.com/Albert-Zhan/httpc@v1.6.1` | `github.com/Albert-Zhan/httpc` |
-| v2 核心 | `go get github.com/Albert-Zhan/httpc/v2@v2.0.0` | `github.com/Albert-Zhan/httpc/v2` |
-| v2 可选 TLS 后端 | `go get github.com/Albert-Zhan/httpc/adapters/tlsclient/v2@v2.0.0` | `github.com/Albert-Zhan/httpc/adapters/tlsclient/v2` |
+| 版本 / 模块 | 安装命令 |
+| --- | --- |
+| v1 稳定版 | `go get github.com/Albert-Zhan/httpc@v1.6.1` |
+| v2 核心 | `go get github.com/Albert-Zhan/httpc/v2@v2.0.0` |
+| v2 可选 TLS 后端 | `go get github.com/Albert-Zhan/httpc/adapters/tlsclient/v2@v2.0.0` |
 
-将安装命令中的版本换成 `@latest` 可在相应模块路径下更新。v1 路径继续选择 v1 稳定版，升级 v2 需要调整导入路径；两代可通过不同别名同时导入。v1 用法见 [v1 文档](https://github.com/Albert-Zhan/httpc/blob/release/v1/README.md)。TLS 后端独立安装，会引入 v2 核心和 TLS 依赖；只使用核心时无需安装它。本地源码开发方式见 [开发说明](CONTRIBUTING.md#本地检查)。
+将版本换成 `@latest` 可在相应模块路径下更新；原路径选择 v1，`/v2` 路径选择 v2，两代可通过不同别名同时导入。v1 由 `release/v1` 维护，用法见 [v1 文档](https://github.com/Albert-Zhan/httpc/blob/release/v1/README.md)。
+
+TLS 后端按需安装，依赖 v2 核心。从本地开发版切换时，移除相关模块的 replace 或 workspace 覆盖。源码开发方式见 [开发说明](CONTRIBUTING.md#本地检查)。
 
 [API 文档](https://pkg.go.dev/github.com/Albert-Zhan/httpc/v2) · [版本发布](https://github.com/Albert-Zhan/httpc/releases) · [从 v1 迁移](MIGRATING.md) · [开发与发布](CONTRIBUTING.md)
 
@@ -122,9 +124,9 @@ if err != nil { fmt.Println(err); return }
 fmt.Println(resp.StatusCode, text)
 ```
 
-StreamForm 的 SetFile 只记录路径，Encode 检查文件元信息，发送时依次打开、读取和关闭文件；内存占用不随文件内容大小增长，普通字段与 multipart 元信息仍缓存在内存中。准确的 Content-Length 包含整个 multipart 正文，GetBody 支持 307/308 重定向重放。从 Encode 到整个发送链结束，源文件须保持不变；检测到文件身份、大小或修改时间变化时返回 ErrUploadFile，检查不能代替文件快照。发送中的文件读取错误通过 Send 返回，不写回 StreamForm.Err。
+StreamForm 缓存字段和 multipart 元信息，文件在发送时依次读取，内存占用不随文件内容大小增长。它提供完整的 Content-Length 和用于 307/308 重放的 GetBody；源文件从编码到发送及重定向结束须保持不变，内容不保存为快照。
 
-文件关闭由后端负责，取消与超时通过 Send(ctx) 控制；直接调用 Encode 或 GetBody 时须自行关闭 Reader。长时间上传应在相应后端禁用总超时，再用任务 context 控制期限。标准后端和 tls-client 的 HTTP/1.1、HTTP/2 均支持该用法；调试沿用有界副本预览，不输出文件内容。tls-client 使用 httpc 调试，避免开启上游 WithDebug。
+Err 记录构建错误，文件检查在 Encode 时完成；发送中的打开、读取等错误通过 Send 返回，可匹配 `ErrUploadFile`。Reader 由 httpc 或后端关闭，直接使用 Encode、GetBody 时须自行关闭。任务期限与取消见 [context 与连接复用](#context-与连接复用)，TLS 后端设置见[适配器说明](adapters/tlsclient/README.md)。
 
 自定义正文实现 `body.Body` 的 `GetContentType() string` 和 `Encode() io.Reader`。可选 `Err() error` 报告构建错误；编码后可用 `ContentLength() int64` 提供长度（-1 未知、0 空正文），用 `GetBody() (io.ReadCloser, error)` 提供独立副本用于重放。未实现可选方法的正文继续使用标准库的推断规则，参见[直接发送标准请求](#外部后端)。
 
@@ -153,7 +155,7 @@ fmt.Printf("status=%d sha256=%x\n", resp.StatusCode, hash.Sum(nil))
 - End 方法支持单一的 `Content-Encoding: gzip`，即使后端关闭自动解压也会解码；响应头保留后端提供的值。`.gz` 文件名或 application/gzip 类型不会触发解包，其他编码及编码组合不由 End 解码。
 - gzip 头配空正文按空正文处理；非空数据截断、损坏或校验失败返回 `ErrDecodeResponse`。
 
-需要自行读取或保留后端返回的原始字节时，使用 `GetResponse().Body` 或 `Client.Do(req)`，自行管理大小限制和关闭。未发送就读取、重复发送或重复读取返回 `ErrInvalidRequest`；重复发送会关闭未读取的响应体，已有错误会继续保留。
+自行读取后端正文时，可使用 `GetResponse().Body` 或 `Client.Do(req)`，自行管理大小限制和关闭；后端已自动解码的内容不会恢复为压缩字节。未发送就读取、重复发送或重复读取返回 `ErrInvalidRequest`；重复发送会关闭未读取的响应体，已有错误会继续保留。
 
 ## 客户端配置
 
@@ -208,6 +210,8 @@ fmt.Println(resp.StatusCode, text)
 
 省略 context 时使用 `context.Background()`，传入的 context 和 Trace 会保留；超时以 context 与客户端中先到者为准，调试不会覆盖已有回调。客户端应在发送前完成配置，使用期间不要复制或修改配置。
 
+长时间上传或下载时，在实际后端禁用或调整总超时，再用任务 context 控制期限；标准后端使用 SetTimeout，外部后端使用自身配置入口。
+
 `CloseIdleConnections()` 可以与请求并发调用，释放空闲连接而不打断活跃请求，也不禁止后续发送。
 
 ## Transport 扩展
@@ -248,7 +252,7 @@ client, err := httpc.NewClientWithDoer(backend)
 
 默认补版本 UA，可通过 `httpc.WithBackendUserAgent()` 将默认 UA 交给后端。两种策略都适用于 Request.Send 和 Client.Do，显式 UA（含空值）保持原样。
 
-Client 也实现 Doer，可直接发送标准库请求；调用方关闭成功响应的 Body，`httpc.WithDebug(ctx)` 可为这种调用开启调试。代理、Transport、TLS、Jar、重定向和总超时在外部后端配置；误用 httpc 的对应配置方法会记录 `ErrUnsupportedBackend` 并阻止发送，需重新创建包装客户端。日志、请求正文、context 和响应限额仍由 httpc 管理。
+Client 也实现 Doer，可直接发送标准库请求；直接 Do 时，响应读取、限额和 Body 关闭由调用方负责，`httpc.WithDebug(ctx)` 可开启调试。代理、Transport、TLS、Jar、重定向和总超时在外部后端配置；误用 httpc 的对应配置方法会记录 `ErrUnsupportedBackend` 并阻止发送，需重新创建包装客户端。
 
 CloseIdleConnections 转发至后端同名方法，不调用其 Close。tls-client 的接入、默认头、请求头顺序及响应转换规则统一见 [tls-client 适配器](adapters/tlsclient/README.md)。
 
@@ -267,7 +271,7 @@ if err != nil { fmt.Println(err); return }
 fmt.Println(result.Path, result.Size, result.Mode)
 ```
 
-下载器流式处理正文，根据 Range、强 ETag 和长度决定是否分段并行，不支持并行时使用单线程。长时间下载应禁用客户端总超时，再用任务 context 控制期限。目标目录须存在，已有文件不会被覆盖；失败会清理临时文件，文件系统须支持硬链接。
+下载器根据 Range、强 ETag 和长度决定是否分段并行，不支持并行时使用单线程；两种模式均流式处理。目标目录须存在，已有文件不会被覆盖；失败会清理临时文件，文件系统须支持硬链接。
 
 配置、进度回调、降级策略和文件规则见 [下载器说明](downloader/README.md)。
 
@@ -286,7 +290,7 @@ SetDebugOutput 接受调用方管理的 Writer；nil 或 io.Discard 丢弃日志
 
 脱敏规则只匹配已配置的名称，忽略大小写和分隔符；`token` 不匹配 `access_token`。可多次追加规则，范围包括请求头、查询参数、JSON 嵌套字段和表单。`Cookie` 隐藏全部 Cookie 值，单独配置 Cookie 名只隐藏对应值；`filename` 对应 multipart 文件名。URL 的用户名、密码和凭据可分别配置 username、password、userinfo，fragment 用于片段；Referer 和 HTTP/2 `:path` 按相应 URL 规则处理，Host 规则同时作用于 `:authority`。
 
-正文只预览最多 64 KiB 的可重放副本，过大、不可重放或非 UTF-8 正文省略；multipart 只展示字段和文件名。配置脱敏后，不能解析或不支持字段过滤的正文也会省略。预览不消耗实际正文，也不代表所有字节已发送。
+可重放正文的预览上限为 64 KiB，过大或不可重放时省略；multipart 只展示字段和文件名，其他正文在不是有效 UTF-8 时省略。配置脱敏后，不能解析或不支持字段过滤的正文也会省略。预览不消耗实际正文，也不代表所有字节已发送。
 
 ```text
 [httpc Debug]

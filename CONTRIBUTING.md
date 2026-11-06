@@ -83,7 +83,7 @@ python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 
 发布通过 `.github/workflows/release.yml` 完成，不在普通功能提交时创建版本。`dev/v2` 的发布配置默认关闭（`enabled: false`），发布前须显式更新 `.github/release.json`。
 
-1. 将对应模块的 `version.go` 的 Version 更新为目标版本，不带 v 前缀。正式版本使用 `2.0.0`，预发布使用 `2.0.0-beta.1` 或 `2.0.0-rc.1`，`-dev` 不能发布。同步文档与依赖并提交，记录完整 SHA。
+1. 将对应模块的 `version.go` 的 Version 更新为目标版本，不带 v 前缀，例如 `2.1.0`、`2.1.0-beta.1` 或 `2.1.0-rc.1`；`-dev` 不能发布。同步文档与依赖并提交，记录完整 SHA。
 2. 在允许发布的分支修改 `.github/release.json`，填写 `enabled: true`、`module_dir`、`tag_name`、`target_commitish`、`name`、`body`。`module_dir` 只允许 `.` 或 `adapters/tlsclient`；标签格式见模块表。
 3. 推送该配置触发发布，或在对应分支手动运行 Publish release。目标必须是配置提交的祖先，不能发布任意其他分支的提交。
 4. 校验目标提交中 Version、模块路径、标签主版本一致；在三平台运行完整检查。适配器发布额外用 `GOWORK=off` 验证已发布的核心依赖，确保不是仅本地 workspace 才能构建。
@@ -95,17 +95,17 @@ python3 -B -m unittest discover -s .github/scripts -p 'test_*.py'
 {
   "enabled": true,
   "module_dir": ".",
-  "tag_name": "v2.0.0-beta.1",
+  "tag_name": "v2.1.0-beta.1",
   "target_commitish": "完整的40位提交SHA",
-  "name": "v2.0.0-beta.1",
+  "name": "v2.1.0-beta.1",
   "body": "本次预发布说明"
 }
 ```
 
-适配器必须先更新 go.mod，使其依赖的核心版本已经发布；预发布适配器可依赖核心预发布，稳定适配器必须依赖核心稳定版。不要在 go.mod 中提交本地 replace。依赖版本变更后，可临时添加本地 replace 执行 go mod tidy，再移除并核对差异；正式发布前必须通过无 workspace 的检查。
+适配器须依赖已发布的核心：预发布适配器可依赖核心预发布，稳定适配器须依赖核心稳定版。依赖更新后，在适配器目录执行 `GOWORK=off go mod tidy`，核对 go.mod 和 go.sum；未发布核心的本地开发使用前述 workspace，核心发布后再补齐校验和。模块文件不提交本地 replace。
 
 预发布自动标记为 Prerelease。适配器版本和预发布不会设为 Latest；核心稳定版只有在不低于已发布核心稳定版时设为 Latest，避免 v2 发布后的 v1 补丁抢占 Latest。
 
-正式版从 `master` 发布，先发布核心，再更新适配器的核心依赖与 go.sum，通过无 workspace 的检查后发布适配器。v1 修复只在 `release/v1` 发布新补丁标签，旧标签不变。GitHub 默认分支继续使用 master；v1 使用者通过原模块路径和 v1 标签安装，无需检出 master。
+首次发布配套版本时，先发布核心，再发布适配器；适配器后续可独立发布，并复用已发布的兼容核心。GitHub 默认分支为 master，v1 使用者通过原模块路径和 v1 标签安装。
 
 检查任务仅有读取权限，发布任务拥有仓库内容写入权限。版本与分支策略由上述 Python 测试覆盖。

@@ -38,7 +38,7 @@ type streamFormPlan struct {
 	length int64
 }
 
-// NewStreamFormData 创建流式表单；文件在 Encode 时检查，在读取正文时打开。
+// NewStreamFormData 创建空的流式 multipart 表单。
 func NewStreamFormData() *StreamForm {
 	return &StreamForm{boundary: multipart.NewWriter(io.Discard).Boundary()}
 }
@@ -69,7 +69,7 @@ func (f *StreamForm) SetData(name, value string) *StreamForm {
 	return f
 }
 
-// SetFile 添加本地普通文件的路径，不读取文件内容；文件检查错误在 Encode 后通过 Err 获取。
+// SetFile 添加本地普通文件的路径，Encode 时检查文件，读取正文时打开。
 func (f *StreamForm) SetFile(name, file string) *StreamForm {
 	if f.canWrite() {
 		f.entries = append(f.entries, streamFormEntry{name: name, value: file, file: true})
@@ -100,8 +100,8 @@ func (f *StreamForm) ContentLength() int64 {
 	return f.plan.length
 }
 
-// Encode 固定字段、文件元信息和边界，返回可关闭的流式 Reader，不读取文件内容。
-// 此后不能修改表单；调用方直接使用 Encode 时负责关闭返回的 io.ReadCloser。
+// Encode 固定表单配置并返回流式 Reader，此后不能修改表单。
+// 直接使用时，调用方负责关闭返回的 io.ReadCloser。
 func (f *StreamForm) Encode() io.Reader {
 	reader, err := f.GetBody()
 	if err != nil {
@@ -110,8 +110,8 @@ func (f *StreamForm) Encode() io.Reader {
 	return reader
 }
 
-// GetBody 创建独立的正文 Reader，用于重放；首次调用也会固定表单。
-// 每个 Reader 由调用方关闭，文件内容不缓存，源文件须保持不变。
+// GetBody 创建独立正文 Reader，用于重放；首次调用按 [StreamForm.Encode] 的规则固定配置。
+// 每个 Reader 均须关闭。
 func (f *StreamForm) GetBody() (io.ReadCloser, error) {
 	if f.err != nil {
 		return nil, f.err

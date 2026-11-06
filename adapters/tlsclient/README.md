@@ -54,7 +54,7 @@ func main() {
 | 日志与脱敏 | httpc.Client；用 Request.SetDebug 或 httpc.WithDebug(ctx) 开启 |
 | 取消、任务期限、Trace | Send(ctx) 或 Client.Do(req) 的 context |
 
-httpc 的标准后端配置方法不适用于此包装客户端，误用返回 `httpc.ErrUnsupportedBackend` 并阻止发送；应在 raw 配置后重新创建包装客户端。`client.CloseIdleConnections()` 转发至 raw，最终 `raw.Close()` 由调用方负责。
+标准后端的配置方法不适用于此包装客户端；误用会记录 `httpc.ErrUnsupportedBackend`，并在发送时返回。配置应在 raw 上完成；如已误用，需重新创建包装客户端。`client.CloseIdleConnections()` 转发至 raw，最终 `raw.Close()` 由调用方负责。
 
 ## 默认 UA 与默认头
 
@@ -64,9 +64,9 @@ httpc 的标准后端配置方法不适用于此包装客户端，误用返回 `
 client, err := tlsclient.New(raw, tlsclient.WithBackendUserAgent())
 ```
 
-两种模式都适用于 Request.Send 和 Client.Do，并保留显式 UA，包括空值和与版本 UA 相同的值。
+两种模式都适用于 Request.Send 和 Client.Do，显式 UA（含空值）优先。
 
-后端 UA 模式不会逐字段合并默认头。tls-client 的 WithDefaultHeaders 仅在请求头完全为空时生效；Content-Type、Cookie、自定义头及排序控制键都会让 Header 非空。未配置后端默认头时，UA 遵循 tls-client 原生行为。空头请求若需版本 UA 与整套默认头共同生效，可将 `httpc.DefaultUserAgent` 放入 raw 的 WithDefaultHeaders。
+WithBackendUserAgent 只停止自动补 UA。raw 的 WithDefaultHeaders 仅在 Header 完全为空时生效，不逐字段合并；Content-Type、Cookie、自定义头和排序控制键都会使 Header 非空。需要原生默认头与版本 UA 一起生效时，在该模式下将 `httpc.DefaultUserAgent` 放入 WithDefaultHeaders；未配置默认头时遵循 raw 的原生行为。
 
 ## 请求头
 

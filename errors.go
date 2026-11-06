@@ -15,7 +15,7 @@ var (
 	ErrInvalidProxy = errors.New("httpc: invalid proxy")
 	// ErrRequestBody 表示请求体构建或编码失败。
 	ErrRequestBody = body.ErrRequestBody
-	// ErrUploadFile 表示上传文件打开、读取或写入表单失败。
+	// ErrUploadFile 表示上传文件处理失败。
 	ErrUploadFile = body.ErrUploadFile
 	// ErrSendRequest 表示发送请求失败，包括连接、代理、TLS、取消和超时错误。
 	ErrSendRequest = errors.New("httpc: send request failed")

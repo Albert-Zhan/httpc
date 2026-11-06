@@ -2,7 +2,7 @@
 
 `github.com/Albert-Zhan/httpc/v2/downloader` 提供单线程与分段并行的流式 GET 文件下载，可使用 `*httpc.Client`、`*http.Client` 或实现标准请求 Do 方法的其他客户端。下载器不关闭共享客户端。
 
-POST 响应或已发送的请求使用 [Request.EndTo](../README.md#读取响应) 写入文件；v1 的 EndFile 替换方式见[迁移说明](../MIGRATING.md#用下载器替代-endfile)。
+POST 响应或已发送的请求使用 [Request.EndTo](../README.md#读取响应) 写入文件。
 
 ## 使用
 

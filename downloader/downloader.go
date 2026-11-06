@@ -27,13 +27,13 @@ type Doer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-// Options 在 New 时复制。Range、If-Range 和 Accept-Encoding 由下载器管理。
+// Options 配置下载行为；Range、If-Range 和 Accept-Encoding 由下载器管理。
 type Options struct {
-	Workers    int   // 0 使用 4 个；1 强制单线程，不探测 Range。
-	ChunkSize  int64 // 0 使用 8 MiB；不决定内存缓冲区大小。
-	MaxBytes   int64 // 0 不限制；限制最终文件的字节数。
-	Retries    int   // 每个分段的额外重试次数，默认 0；仅重试临时传输错误。
-	Headers    http.Header
+	Workers    int            // 0 使用 4 个；1 强制单线程并跳过探测；最大 128。
+	ChunkSize  int64          // 0 使用 8 MiB；不决定内存缓冲区大小。
+	MaxBytes   int64          // 0 不限制；限制最终文件的字节数。
+	Retries    int            // 每个分段额外重试 0–10 次；仅重试网络错误或正文截断。
+	Headers    http.Header    // 自定义头；New 时复制，包含值切片。
 	Debug      bool           // 配合 httpc.Client，开启发送阶段日志。
 	OnProgress func(Progress) // 每次下载串行回调；回调须及时返回。
 }
@@ -60,7 +60,7 @@ type Downloader struct {
 	opts   Options
 }
 
-// New 创建下载器；Headers 中的切片也会复制。
+// New 校验配置并创建下载器。
 func New(client Doer, opts Options) (*Downloader, error) {
 	if client == nil || isNil(client) {
 		return nil, fmt.Errorf("%w: client is nil", ErrInvalidOptions)
